@@ -7,16 +7,14 @@ from torch.utils.data.dataset import Dataset
 import pytorch_lightning as pl
 import numpy as np
 import os
+
+from src.config.datafiles import storm_data_dir, matlab_data_dir, jonny_data_dir
+from src.config.optics import bounds
 from src.data.data_processing import process_STORM_datadir, process_MATLAB_data, process_multiple_MATLAB_data, \
     process_jonny_datadir
-from src.zernike_decomposition.gen_psf import gen_dataset
+from src.zernike_decomposition.gen_psf import gen_dataset, min_max_norm
 
 dtype = np.float32
-
-storm_data_dir = os.path.join(os.path.dirname(__file__), 'raw_data', 'storm')
-jonny_data_dir = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, 'raw_data', 'jonny_data')
-# jonny_data_dir = '/Volumes/Samsung_T5/uni/smlm/647_wf/'
-matlab_data_dir = os.path.join(os.path.dirname(__file__), 'raw_data', 'matlab_data')
 
 
 class CustomDataset(Dataset):
@@ -53,10 +51,16 @@ def load_storm_datasets(test_size):
     return split_datasets(X, y, test_size)
 
 
-def load_jonny_datasets(test_size, datasets):
-    X, y = process_jonny_datadir(jonny_data_dir, datasets=datasets)
+def load_jonny_datasets(test_size, datasets=None):
+    X, y = process_jonny_datadir(jonny_data_dir, datasets=datasets, bound=bounds)
     X = reorder_channel(X)
-    return split_datasets(X, y, test_size)
+    if len(y.shape) == 1:
+        y = y[:, np.newaxis]
+
+    X = min_max_norm(X)
+    if test_size != 0:
+        return split_datasets(X, y, test_size)
+    return X, y
 
 
 def load_matlab_datasets(test_size, debug):
@@ -109,10 +113,10 @@ def dump_training_psfs(psfs, z_pos):
         imwrite(fname, psf)
 
 
-def load_custom_psfs(test_size):
-    psfs, z_pos = gen_dataset(10000)
+def load_custom_psfs(n_psfs, test_size):
+    psfs, z_pos = gen_dataset(n_psfs, noise=True)
     print(f'Norm ratio: {z_pos.max()}')
-    z_pos = z_pos/z_pos.max()
+    # z_pos = z_pos/z_pos.max()
     n_stacks = psfs.shape[0]
     X = np.concatenate(psfs, axis=0)
     ys = np.tile(z_pos, n_stacks)[:, np.newaxis]
@@ -130,18 +134,26 @@ class DataModule(pl.LightningDataModule):
         self.debug = debug
         self.jonny_datasets = jonny_datasets
 
-    def prepare_data(self):
+    def prepare_data(self, n_psfs):
         # self.train, self.val = load_storm_datasets(self.test_size)
         # self.train, self.val = load_matlab_datasets(self.test_size, self.debug)
         # self.train, self.val = load_test_datasets()
         # self.train, self.val = load_jonny_datasets(self.test_size, self.jonny_datasets)
-        self.train, self.val = load_custom_psfs(0.1)
+        self.train, self.val = load_custom_psfs(n_psfs, self.test_size)
+        print('Train', self.train.x.shape, self.train.y.shape)
+        self.val = CustomDataset(*load_jonny_datasets(0))
+        print('Val', self.val.x.shape, self.val.y.shape)
+
+
 
     def train_dataloader(self):
         return DataLoader(self.train, batch_size=self.batch_size, num_workers=8, shuffle=False)
 
     def val_dataloader(self):
         return DataLoader(self.val, batch_size=self.batch_size, num_workers=8)
+
+    # def test_dataloader(self):
+    #     return DataLoader(self.test, batch_size=self.batch_size, num_workers=8)
 
     # def test_dataloader(self):
     #     return DataLoader(self.test, batch_size=64)

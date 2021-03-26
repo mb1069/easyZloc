@@ -36,7 +36,7 @@ def get_model():
         nn.ReLU(True),
         nn.Dropout(),
         nn.Linear(4096, 1),
-        nn.Sigmoid()
+        # nn.Hardswish()
     )
     return model
 
@@ -63,10 +63,9 @@ class SimpleConv(nn.Module):
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.ReLU(True),
             nn.Flatten(),
-            nn.Linear(in_features=4096, out_features=200),
+            nn.Linear(in_features=6400, out_features=200),
             nn.Dropout(),
             nn.Linear(in_features=200, out_features=num_zernike),
-            nn.Tanh(),
         )
 
     def forward(self, x):

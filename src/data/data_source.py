@@ -8,7 +8,7 @@ from tifffile import imread, imshow, imwrite
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from src.data.data_manager import jonny_data_dir
+from src.config.datafiles import jonny_data_dir
 
 
 def cut_image_stack(image, center, width=16, show=False):
@@ -37,6 +37,7 @@ def cut_image_stack(image, center, width=16, show=False):
 
 def filter_localisations(coordinates, im_size, bound, pixel_size):
     valid_emitters = []
+    min_seperation = math.sqrt(2 * (bound ** 2))
     for i in range(len(coordinates)):
         c_x, c_y = coordinates[i]
         # Check emitter against edges of images
@@ -47,11 +48,11 @@ def filter_localisations(coordinates, im_size, bound, pixel_size):
         reject = False
         for i2 in range(i + 1, len(coordinates)):
             c2_x, c2_y = coordinates[i2]
-            x_diff = c2_x - c_x
-            y_diff = c2_y - c_y
-            dist = np.linalg.norm([x_diff, y_diff])
-            dist_pixels = dist / pixel_size
-            if dist_pixels <= bound*math.sqrt(2):
+            x_diff = (c2_x - c_x) ** 2
+            y_diff = (c2_y - c_y) ** 2
+            dist = np.sqrt(x_diff + y_diff)
+
+            if dist < (min_seperation * 1.5):
                 reject = True
                 # print(c_x, c2_x, c_y, c2_y, x_diff, y_diff, 'too close to point')
                 break
@@ -79,6 +80,9 @@ class DataSource:
 class JonnyDataSource(DataSource):
     voxel_size = (0.1, 0.085, 0.085)
 
+    def __init__(self, directory=jonny_data_dir):
+        super().__init__(directory)
+
     def localisation2pixel(self, df, im_shape):
         x_pixel = (im_shape[2] / 2) + (df['x0 (um)'] / self.voxel_size[2])
         y_pixel = im_shape[1] - ((im_shape[1] / 2) + (df['y0 (um)'] / self.voxel_size[1]))
@@ -105,12 +109,10 @@ class JonnyDataSource(DataSource):
     def get_all_emitter_stacks(self, bound=16, pixel_size=85):
         imstack_csvs = self.get_img_stack_csv_pairs()
 
-        emitters = []
         coordinates = []
         pixel_xs = []
         pixel_ys = []
         for img, csv in tqdm(imstack_csvs):
-            print(img)
             image = imread(img)
             truth = pd.read_csv(csv, skiprows=28)
             data = truth[["x0 (um)", "y0 (um)", "z0 (um)"]]
@@ -121,35 +123,36 @@ class JonnyDataSource(DataSource):
             pixel_x, pixel_y = self.localisation2pixel(data, image.shape)
 
             # pixel_x, pixel_y = round(data["x0 (nm)"] / pixel_size), round(data["y0 (nm)"] / pixel_size)
-
             emitter_coords = list(zip(pixel_x, pixel_y))
             emitter_coords = filter_localisations(emitter_coords, image.shape, bound, pixel_size)
+
             # pixel_x, pixel_y = list(zip(*emitter_coords))
             pixel_xs.extend(pixel_x)
             pixel_ys.extend(pixel_y)
             for coord in tqdm(emitter_coords):
                 psf = cut_image_stack(image, coord, width=bound)
 
-                emitters.append(psf)
                 coordinates.append(coord)
 
                 # imshow(psf[20])
                 # plt.show()
+                yield psf
 
-        pd.DataFrame.from_dict({'x': pixel_xs, 'y': pixel_ys}).to_csv('/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/coords.csv')
+        # pd.DataFrame.from_dict({'x': pixel_xs, 'y': pixel_ys}).to_csv(
+        #     '/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/coords.csv')
         # quit()
-        emitters = np.stack(emitters)
-        return emitters, coordinates
+        # return emitters, coordinates
+
         # pixel_locations = pd.DataFrame({"x": pixel_x, "y": pixel_y, "z": data["z0 (nm)"]})
         # filtered_emitters = image_processing.filter_points(pixel_locations, bound=bound)
         # x, y = image_processing.get_emitter_data(image, filtered_emitters, bound=bound
 
-
-if __name__ == '__main__':
-    ds = JonnyDataSource(jonny_data_dir)
-    psfs, _ = ds.get_all_emitter_stacks(bound=20, pixel_size=85)
-    for i, psf in enumerate(psfs):
-        imshow(psf[int(psf.shape[0]/2)])
-        plt.show()
-        imwrite(f'/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/{i}.tif', psf, compress=6)
-
+#
+# if __name__ == '__main__':
+#     ds = JonnyDataSource(jonny_data_dir)
+#     psfs, _ = ds.get_all_emitter_stacks(bound=20, pixel_size=85)
+#     for i, psf in enumerate(psfs):
+#         imshow(psf[int(psf.shape[0]/2)])
+#         plt.show()
+#         imwrite(f'/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/{i}.tif', psf, compress=6)
+#
