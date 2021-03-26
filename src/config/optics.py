@@ -1,6 +1,8 @@
 voxel_sizes = (100, 85, 85)
+# Z X Y
 
-target_psf_shape = (41, 40, 40)
+bounds = 20
+target_psf_shape = (41, bounds*2, bounds*2)
 
 model_kwargs = dict(
     wl=660,

@@ -8,6 +8,7 @@ from glob import glob
 # Use ImageJ macro to generate bead frames, then use this code to
 # extract bead PSFs and positions
 from src.data import image_processing
+from src.zernike_decomposition.gen_psf import min_max_norm
 
 
 def process_jonny_datadir(directory, bound=16, y_dims=1, pixel_size=106, normalise_images=True, datasets=None):
@@ -22,6 +23,7 @@ def process_jonny_datadir(directory, bound=16, y_dims=1, pixel_size=106, normali
     for image in sample_images:
         truth = os.path.join(os.path.dirname(image), 'stack', 'MMStack_Default.csv')
         x, y = process_jonny_tif(image, truth, bound=bound, pixel_size=pixel_size, normalise_images=normalise_images)
+        x = min_max_norm(x)
         x_all = np.append(x_all, x, axis=0)
         y_all = np.append(y_all, y)
 
@@ -37,7 +39,6 @@ def process_jonny_datadir(directory, bound=16, y_dims=1, pixel_size=106, normali
 
 
 def process_jonny_tif(image, localisations_csv, pixel_size=106, bound=16, normalise_images=True, known_zpos=True):
-    print(image)
     image = io.imread(image)
     truth = pd.read_csv(localisations_csv, skiprows=28)
     data = truth[["x0 (um)", "y0 (um)", "z0 (um)"]]
