@@ -1,3 +1,4 @@
+import pandas as pd
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
 import xgboost
@@ -17,22 +18,52 @@ def split_dataset(xs, ys):
     }
 
 
-def eval(model, test_dataset, title):
+def eval(model, test_dataset):
     x, y = test_dataset
-    x = x.astype(np.float)
+    x = x.astype(np.float32)
     y_pred = model.predict(x)
-    ae = abs(y_pred - y.squeeze())
-    plt.boxplot(ae)
-    plt.title(f'{title} MAE: {round(ae.mean(), 4)} STDev: {round(ae.std(), 4)}')
-    plt.yscale('log')
-    plt.ylabel('Absolute error (nm)')
-    plt.show()
-    plt.scatter(y.squeeze(), y_pred.squeeze())
-    plt.xlabel('Ground truth (nm)')
-    plt.ylabel('Predicted position (nm)')
+
+    ae = y_pred - y.squeeze()
+
+    minbin = round(y.min() / 2) * 2
+    maxbin = round(y.max() / 2) * 2
+    r = maxbin - minbin
+    if r > 50000:
+        bins = np.linspace(-80, 80, 9)
+        title = 'Long range autofocus error'
+    else:
+        bins = np.linspace(-10, 10, 11)
+        title = 'Short range autofocus error'
+    df = pd.DataFrame.from_dict({'defocus': y / 1000, 'ae': ae / 1000})
+    df['defocus_bin'] = pd.cut(df['defocus'], bins)
+    df.boxplot(by='defocus_bin', column='ae', rot=45)
+    plt.title(title)
+    plt.suptitle("")
+    plt.ylabel('Mean prediction error (um)')
+    plt.xlabel('Defocus (um)')
+    plt.tight_layout()
     plt.show()
 
-    print('MAE:', round(ae.mean(), 4))
+    df.boxplot(by='defocus_bin', column='ae', rot=45)
+    plt.title(title)
+    plt.suptitle("")
+    plt.ylabel('Mean prediction error (um)')
+    plt.xlabel('Defocus (um)')
+    plt.ylim(-2, 2)
+    plt.tight_layout()
+    plt.show()
+
+    # plt.boxplot(ae)
+    # plt.title(f'{title} MAE: {round(ae.mean(), 4)} STDev: {round(ae.std(), 4)}')
+    # plt.yscale('log')
+    # plt.ylabel('Absolute error (nm)')
+    # plt.show()
+    # plt.scatter(y.squeeze(), y_pred.squeeze())
+    # plt.xlabel('Ground truth (nm)')
+    # plt.ylabel('Predicted position (nm)')
+    # plt.show()
+
+    print('MAE:', round(abs(ae).mean(), 4))
 
 
 def train_model(dataset):
@@ -70,40 +101,39 @@ def train_model(dataset):
             continue
         break
 
-    eval(model, dataset['test'], 'Test')
+    eval(model, dataset['test'])
     return model
 
 
 def main():
-    for dwt_level in range(1, 7):
-        # Use 0:cutoff for training/validation and cutoff:end for test
-        cutoff = int(len(imgs) * 0.8)
+    dwt_level = 6
+    # Use 0:cutoff for training/validation and cutoff:end for test
 
-        xs, ys = gather_data(slice(0, cutoff), dwt_level=dwt_level)
-        xs_vars = np.var(xs, axis=0)
+    cutoff = int(len(imgs) * 0.8)
+    xs, ys = gather_data(slice(0, cutoff), dwt_level=dwt_level)
 
-        cols = np.where(xs_vars > 0.1)[0]
-        print(f'Removing {xs.shape[1]-len(cols)} features with low variance.')
-        xs = xs[:, cols]
+    xs_vars = np.var(xs, axis=0)
 
-        print(f'X: {round(xs.nbytes / (10**9), 3)} GB')
-        print(f'Y: {round(ys.nbytes / (10**9), 3)} GB')
+    cols = np.where(xs_vars > 0.1)[0]
+    print(f'Removing {xs.shape[1] - len(cols)} features with low variance.')
+    xs = xs[:, cols]
 
+    print(f'X: {round(xs.nbytes / (10 ** 9), 3)} GB')
+    print(f'Y: {round(ys.nbytes / (10 ** 9), 3)} GB')
 
-        # vt = VarianceThreshold(threshold=0.1)
-        # xs = vt.fit_transform(xs)
+    # vt = VarianceThreshold(threshold=0.1)
+    # xs = vt.fit_transform(xs)
 
-        dataset = split_dataset(xs, ys)
-        model = train_model(dataset)
+    dataset = split_dataset(xs, ys)
+    model = train_model(dataset)
 
-        val_xs, val_ys = gather_data(slice(cutoff, len(imgs)), dwt_level=dwt_level)
-        # val_xs = vt.transform(val_xs)
+    val_xs, val_ys = gather_data(slice(cutoff, len(imgs)), dwt_level=dwt_level)
+    # val_xs = vt.transform(val_xs)
 
-        val_xs = val_xs[:, cols]
+    val_xs = val_xs[:, cols]
 
-
-        validation_stacks = (val_xs, val_ys)
-        eval(model, validation_stacks, f'Validated_{dwt_level}')
+    validation_stacks = (val_xs, val_ys)
+    # eval(model, validation_stacks)
 
 
 if __name__ == '__main__':
