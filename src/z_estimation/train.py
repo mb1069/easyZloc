@@ -10,9 +10,8 @@ import numpy as np
 import argparse
 from pytorch_lightning.loggers.wandb import wandb
 
-from src.data.data_manager import DataModule
-
-from src.z_estimation.models import convolutional
+from src.data import data_manager
+from src.z_estimation.models import convolutional, resnet
 
 model_save_path = os.path.join(os.path.dirname(__file__), 'model.pth')
 
@@ -20,12 +19,22 @@ DEBUG = False
 
 test_size = 0.1
 epochs = 100
-batch_size = 2048
 n_psfs = 10000
+
+MODEL = 'resnet'
+
+if MODEL == 'conv':
+    BATCH_SIZE = 2048
+    MODEL = convolutional.SimpleConv(1)
+    LR = 0.01
+else:
+    BATCH_SIZE = 256
+    MODEL = resnet.get_model()
+    LR = 0.01
 
 if DEBUG:
     epochs = 5
-    batch_size = 5
+    BATCH_SIZE = 5
     n_psfs = 100
 
 
@@ -42,8 +51,7 @@ class RMSELoss(torch.nn.Module):
 class LitModel(pl.LightningModule):
     def __init__(self):
         super().__init__()
-        self.model = convolutional.get_model()
-        # self.model = convolutional.SimpleConv(1)
+        self.model = MODEL
         self.loss = RMSELoss()
         self.training_losses = []
         self.validation_losses = []
@@ -54,6 +62,7 @@ class LitModel(pl.LightningModule):
         self.val_loss_label = 'val_loss'
         self.test_loss_label = 'test_loss'
         self.test_loss_label_mean = 'test_loss_mean'
+        self.val_outputs = []
 
     def pred(self, X):
         X = torch.from_numpy(X).float()
@@ -61,7 +70,7 @@ class LitModel(pl.LightningModule):
             return self(X).numpy()
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(x).squeeze()
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -75,33 +84,29 @@ class LitModel(pl.LightningModule):
         y_hat = self(x)
         loss = self.loss(y_hat, y)
         self.log(self.val_loss_label, loss, on_epoch=True, on_step=False)
-        return {
-            'loss': loss,
+        res = {
+            'loss': torch.sqrt(torch.pow(y-y_hat, 2)),
             'pred': y_hat,
             'truth': y
         }
+        res = {k: v.cpu().numpy().ravel() for k, v in res.items()}
+        df = pd.DataFrame.from_dict(res)
+        self.val_outputs.append(df)
+        return loss
 
-    def validation_epoch_end(self, outputs):
-        cols = {k: [float(v.squeeze().cpu().numpy())] for k, v in outputs[0].items()}
-        for bp in outputs[1:]:
-            for k, v in bp.items():
-                cols[k].append(float(v.cpu().numpy()))
-        df = pd.DataFrame.from_dict(cols)
-        bins = np.linspace(0, df['truth'].max(), 20)
-        groups = df.groupby(['truth', pd.cut(df.loss, bins)])
-        data_x = []
-        data_y = []
-        for middle, gdf in groups:
-            data_x.append(middle[0])
-            data_y.append(gdf.loss.mean())
+    def on_validation_epoch_end(self) -> None:
+        df = pd.concat(self.val_outputs)
+        bin_count = 17
+        bins = np.linspace(-4000, 4000, bin_count).squeeze()
+        bin_size = int(bins[1] - bins[0])
+        groups = df.groupby(pd.cut(df['truth'], bins))
+        log_data = {f'Range {g[0].left - (bin_size / 2)}-{g[0].right + (bin_size / 2)}': float(g[1]['loss'].mean()) for g in groups}
+        self.log_dict(log_data)
 
-        data = [[x, y] for (x, y) in zip(data_x, data_y)]
-        table = wandb.Table(data=data, columns=["x", "y"])
-        wandb.log({"my_custom_plot_id": wandb.plot.line(table, "x", "y",
-                                                        title="Variation in loss over axial positions")})
+        self.val_outputs = []
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=0.01, weight_decay=5e-4)
+        optimizer = torch.optim.SGD(self.parameters(), lr=LR, weight_decay=5e-4)
         return {
             'optimizer': optimizer,
             'lr_scheduler': ReduceLROnPlateau(optimizer, verbose=True, patience=5),
@@ -117,12 +122,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.debug:
-        batch_size = 1
+        BATCH_SIZE = 1
         epochs = 10
         n_psfs = 5
 
-    print('Batch size', batch_size)
-    dm = DataModule(batch_size, test_size=test_size, debug=args.debug)
+    print('Batch size', BATCH_SIZE)
+    dm = data_manager.DataModule(BATCH_SIZE, test_size=test_size, debug=args.debug)
     wandb_logger = WandbLogger(project='smlm_z', name=args.rname)
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
@@ -142,35 +147,20 @@ if __name__ == '__main__':
 
 
     dm.prepare_data(n_psfs)
+    dm.print_stats()
 
-    # trainer = pl.Trainer(max_epochs=epochs, gpus=count_gpus, distributed_backend=backend, logger=wandb_logger, callbacks=[get_early_stop(monitor=model.val_loss_label)])
     trainer = pl.Trainer(max_epochs=epochs,
                          gpus=count_gpus,
                          distributed_backend=backend,
                          logger=wandb_logger,
                          callbacks=[get_early_stop(monitor=model.val_loss_label), lr_monitor],
-                         gradient_clip_val=0.5)
+                         gradient_clip_val=0.5,
+                         check_val_every_n_epoch=1)
 
     trainer.fit(model, datamodule=dm)
-
-    # dm2 = ReptileDataModule(1, test_size=test_size, debug=args.debug, jonny_datasets=[0])
-    # model.train_loss_label = 'train2_loss'
-    # model.val_loss_label = 'val2_loss'
-    # trainer2 = pl.Trainer(max_epochs=epochs, gpus=count_gpus, distributed_backend=backend, logger=wandb_logger,
-    #                      callbacks=[get_early_stop(monitor=model.val_loss_label)])
-    #
-    # trainer2.fit(model, dm2)
-    #
-    #
-    # print('Training batch 3')
-    # model2 = LitModel(im_size=im_size)
-    # model2.train_loss_label = 'train3_loss'
-    # model2.val_loss_label = 'val3_loss'
-    # trainer = pl.Trainer(max_epochs=epochs, gpus=count_gpus, distributed_backend=backend, logger=wandb_logger,
-    #                      callbacks=[get_early_stop(monitor=model2.val_loss_label)])
-    # trainer.fit(model2, dm2)
 
     trainer.save_checkpoint(model_save_path)
     print(f'Saved to {model_save_path}')
     wandb_logger.experiment.save(__file__)
+    wandb_logger.experiment.save(data_manager.__file__)
     wandb_logger.experiment.save(model_save_path)

@@ -4,17 +4,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from pyotf.utils import prep_data_for_PR, remove_bg
+from sklearn.metrics import mean_squared_error
 
 from src.config.datafiles import jonny_data_dir
 from src.config.optics import target_psf_shape, voxel_sizes, model_kwargs, bounds
-from src.data.data_manager import reorder_channel
-from src.data.data_processing import process_jonny_datadir
+from src.data.data_manager import reorder_channel, load_corrected_datasets
 
 from src.data.data_source import JonnyDataSource
 from src.data.evaluate import avg_rmse
 from src.data.visualise import show_psf_axial
 from src.z_estimation.train import LitModel
-from src.zernike_decomposition.gen_psf import gen_dataset, min_max_norm
+from src.zernike_decomposition.gen_psf import gen_dataset
+from src.wavelets.wavelet_data.util import min_max_norm
 
 model_path = os.path.join(os.path.dirname(__file__), 'model.pth')
 
@@ -22,7 +23,7 @@ model_path = os.path.join(os.path.dirname(__file__), 'model.pth')
 def get_available_devices():
     if torch.cuda.is_available():
         return torch.device('cuda'), torch.cuda.device_count()
-    return torch.device('cpu'), 0
+    return torch.device('cpu'),
 
 
 def load_trained_model(device):
@@ -54,32 +55,40 @@ def eval_results(y_true, y_pred):
 
 
 def eval_jonny_datasets(model):
-    X, y_true = process_jonny_datadir(jonny_data_dir, datasets=list(range(20)), bound=bounds)
+    count = 1000
+    dataset = load_corrected_datasets(0)
+    X = dataset.x
+    y_true = dataset.y
+    print(X.shape)
+    X = X[0:count]
+    y_true = y_true[0:count]
+    print(X.shape)
+
+    # X, y_true = process_jonny_datadir(jonny_data_dir, datasets=list(range(20)), bound=bounds)
 
     # axial_max = X.max(axis=(1, 2))
     # X = X / axial_max[:, None, None]
-    X = min_max_norm(X)
-    X = reorder_channel(X)
+    # X = min_max_norm(X)
 
     y_pred = model.pred(X).squeeze()
 
-    y_mse = np.sqrt((np.square(y_pred - y_true)))
+    y_mse = mean_squared_error(y_pred, y_true)
     # y_pred = y_pred / (y_pred.max())
     # y_true = y_true / (y_true.max())
 
-    zero = min(y_pred.min(), y_true.min())
+    # zero = min(y_pred.min(), y_true.min())
+    #
+    # y_pred -= zero
+    # y_true -= zero
 
-    y_pred -= zero
-    y_true -= zero
-
-    plt.scatter(y_true, y_mse)
+    plt.scatter(y_true, y_pred)
     fit_line = np.linspace(y_true.min(), y_true.max(), 100)
-    plt.plot(fit_line, fit_line, label='y=x')
+    plt.plot(fit_line, fit_line, label='y=x', color='red')
 
     plt.xlabel('True axial position')
-    plt.ylabel('Absolute error in predicted position')
-    plt.xlim((y_true.min(), y_true.max()))
-    plt.ylim((y_mse.min(), y_mse.max()))
+    plt.ylabel('Predicted axial position')
+    # plt.xlim((y_true.min(), y_true.max()))
+    # plt.ylim((y_mse.min(), y_mse.max()))
     plt.show()
     # Center means
     # eval_results(y_true, y_pred)
@@ -118,8 +127,9 @@ def eval_emitter_stack(model):
         X = reorder_channel(X)
         z_pred = model.pred(X)
 
+
         x = np.linspace(0, X.shape[0], X.shape[0])
-        z_pos = np.linspace(0, target_psf_shape[0] * voxel_sizes[0], target_psf_shape[0])
+        z_pos = np.linspace(0, (target_psf_shape[0]-1) * (voxel_sizes[0]), target_psf_shape[0])
 
         print('Pred range', z_pred.min(), z_pred.max())
         print('True range', z_pos.min(), z_pos.max())
@@ -147,7 +157,7 @@ def eval_emitter_stack(model):
         # ax2.legend()
 
         plt.show()
-        show_psf_axial(original_psf)
+        show_psf_axial(psf)
         input()
 
 
@@ -215,12 +225,11 @@ def scratch():
 
 
 def main():
-    ExperimentalEvaluator()
-    # device = get_available_devices()
-    # model = load_trained_model(device)
-    # # eval_jonny_datasets(model)
+    device = get_available_devices()
+    model = load_trained_model(device)
+    eval_jonny_datasets(model)
     # eval_emitter_stack(model)
-    # # eval_training_dataset(model)
+    # eval_training_dataset(model)
     # quit()
     #
     # scratch()

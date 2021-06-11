@@ -23,7 +23,7 @@ USE_GPU = torch.cuda.is_available()
 
 
 def prepare_dataloaders(batch_size, test_size):
-    train_dataset, val_dataset = load_custom_psfs(test_size)
+    train_dataset, val_dataset = load_custom_psfs(, test_size
     # train_dataset, val_dataset = load_matlab_datasets(test_size, False)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8, shuffle=True, pin_memory=True)
@@ -43,7 +43,7 @@ class Model(nn.Module):
         self.model = convolutional.get_model()
 
     def forward(self, x):
-        return self.model(x)
+        return self.model(x).squeeze()
 
     def pred(self, X):
         X = torch.from_numpy(X).float()
@@ -76,9 +76,9 @@ def main():
     wandb.save(__file__)
     model = Model()
 
-    epochs = 100
+    epochs = 200
 
-    batch_size = 2500
+    batch_size = 3000
     test_size = 0.1
 
     train_loader, val_loader = prepare_dataloaders(batch_size, test_size)
@@ -96,7 +96,6 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01, weight_decay=5e-4)
     scheduler = ReduceLROnPlateau(optimizer, 'min', verbose=True)
 
-    num_train = len(train_loader)
     for epoch in trange(epochs):
         model.train()
         epoch_loss = 0
@@ -115,10 +114,10 @@ def main():
 
         log = {
             'epoch': epoch,
-            'train_loss': mse_to_unormalised(epoch_loss / num_train)
+            'train_loss': epoch_loss /  (i+1)
         }
 
-        log['val_loss'] = mse_to_unormalised(validate(model, val_loader, criterion))
+        log['val_loss'] = validate(model, val_loader, criterion)
         wandb.log(log)
         tqdm.write(f" Loss: {round(log['train_loss'], 4)}\t Val Loss: {round(log['val_loss'], 4)}")
 
