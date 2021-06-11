@@ -1,6 +1,8 @@
 import copy
 import glob
 import random
+from functools import partial
+from multiprocessing.pool import Pool
 
 from pyotf.utils import prep_data_for_PR
 from pyotf.zernike import name2noll
@@ -8,14 +10,16 @@ from tifffile import imread
 import numpy as np
 import matplotlib.pyplot as plt
 # model kwargs
-from src.config.datafiles import psf_modelling_file
+from tqdm import tqdm
+
+from src.config.datafiles import psf_modelling_file, jonny_data_dir
 from src.config.optics import model_kwargs
 from pyotf.otf import HanserPSF, apply_aberration
 from pyotf.phaseretrieval import retrieve_phase
-from src.data.data_manager import jonny_data_dir
 import pandas as pd
 
 # logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+from src.data.data_processing import process_jonny_datadir
 from src.data.visualise import show_psf_axial
 from src.data.evaluate import mse
 from src.zernike_decomposition.gen_psf import gen_psf_named_params, gen_psf_modelled_param
@@ -39,7 +43,7 @@ def normalise_to_float(psf):
     return psf
 
 
-def fit_psf_lsquares(psf, n_zerns=32):
+def fit_psf_lsquares(n_zerns, psf):
     _model_kwargs = model_kwargs.copy()
     _model_kwargs['zsize'] = psf.shape[0]
     _model_kwargs['size'] = psf.shape[1]
@@ -52,7 +56,7 @@ def fit_psf_lsquares(psf, n_zerns=32):
     psf = prep_data_for_PR(psf, multiplier=1.01)
 
     PR_result = retrieve_phase(
-        psf, _model_kwargs, max_iters=100, pupil_tol=0, mse_tol=0, phase_only=False,
+        psf, _model_kwargs, max_iters=1000, pupil_tol=0, mse_tol=0, phase_only=True,
     )
     PR_result.fit_to_zernikes(n_zerns)
     # PR_result.plot()
@@ -74,9 +78,9 @@ def fit_psf_lsquares(psf, n_zerns=32):
 
 
 def fit_multiple_psfs(psfs, n_zerns):
-    results = []
-    for psf in psfs:
-        results.append(fit_psf_lsquares(psf, n_zerns))
+    pfunc = partial(fit_psf_lsquares, n_zerns)
+    with Pool(4) as p:
+        results = list(tqdm(p.imap(pfunc, psfs), total=len(psfs)))
 
     df = pd.DataFrame.from_records(results)
 
@@ -90,12 +94,12 @@ def fit_multiple_psfs(psfs, n_zerns):
     avg_psf = avg_psf / avg_psf.max()
     print(avg_psf.shape)
 
-    psfs = [avg_psf] + list(random.sample(psfs, 5))
-    psfs = [((psf / psf.max()) * 65535).astype(np.uint16) for psf in psfs]
-    psfs = [prep_data_for_PR(psf, multiplier=1.01) for psf in psfs]
-    all_psfs = np.concatenate(psfs, axis=2)
-    print(all_psfs.shape)
-    show_psf_axial(all_psfs)
+    # psfs = [avg_psf] + list(random.sample(psfs, 5))
+    # psfs = [((psf / psf.max()) * 65535).astype(np.uint16) for psf in psfs]
+    # psfs = [prep_data_for_PR(psf, multiplier=1.01) for psf in psfs]
+    # all_psfs = np.concatenate(psfs, axis=2)
+    # print(all_psfs.shape)
+    # show_psf_axial(all_psfs)
 
 
 def main():
@@ -151,7 +155,7 @@ if __name__ == '__main__':
     for psf_path in list(
             glob.glob('/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/*.tif')):
         psfs.append(imread(psf_path))
-    fit_multiple_psfs(psfs, 120)
+    fit_multiple_psfs(psfs, 32)
 
     pcoefs = named_aberration_to_pcoefs('oblique astigmatism', 1)
     # pcoefs2 = named_aberration_to_pcoefs('Vertical astigmatism', 1)
@@ -183,7 +187,7 @@ if __name__ == '__main__':
     # target_psf /= target_psf.max()
     # show_psf_axial(target_psf)
 
-    res = fit_psf_lsquares(target_psf, 32)
+    res = fit_psf_lsquares(32, target_psf)
 
     result_psf = gen_psf_modelled_param(res['mcoefs'], res['pcoefs'])
     result_psf = result_psf / result_psf.max()

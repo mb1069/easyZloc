@@ -44,7 +44,7 @@ def main():
     for imname, psf in tqdm(psf_dict.items()):
         model_kwargs['zsize'] = psf.shape[0]
         model_kwargs['size'] = psf.shape[1]
-        lsquares_res = fit_psf_lsquares(psf, N_ZERNS)
+        lsquares_res = fit_psf_lsquares(N_ZERNS, psf)
         ga_res = ga_fit_psf(psf, N_ZERNS, plot_best=False)
         records.append({
             'name': imname,
