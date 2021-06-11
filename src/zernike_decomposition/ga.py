@@ -74,7 +74,7 @@ N_ZERNS = 16
 
 POP = 1000
 NGEN = 100
-CXPB = 0.2
+CXPB = 0.4
 MUTPB = 0.5
 
 
@@ -219,7 +219,7 @@ def prepare_and_model(target_psf, is_simulated_psf):
 
 
 def main():
-    target_psf_path = '/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters/2.tif'
+    target_psf_path = '/home/miguel/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters/1.tif'
     target_psf = imread(target_psf_path)
     # pcoefs = named_aberration_to_pcoefs('Oblique astigmatism', 1)
     # pcoefs2 = named_aberration_to_pcoefs('Vertical astigmatism', 1)

@@ -2,13 +2,17 @@ import glob
 import os
 
 from matplotlib import cm
-from pyotf.otf import HanserPSF, apply_aberration
+from pyotf.otf import HanserPSF, apply_aberration, apply_named_aberration
 from pyotf.phaseretrieval import retrieve_phase
 from pyotf.utils import prep_data_for_PR, center_data
-from tifffile import imread, imshow
+from tifffile import imread, imshow, imwrite
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+
+from src.config.optics import model_kwargs
+from src.data.visualise import show_psf_axial
+
 
 def mse(y, y_pred):
     return np.mean((y - y_pred) ** 2).sum()
@@ -22,7 +26,8 @@ def gen_csv():
     imgs = []
 
     n_zerns = 120
-    for psf_path in list(glob.glob('/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/*.tif')):
+    for psf_path in list(
+            glob.glob('/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/*.tif')):
         imgs.append(os.path.basename(psf_path))
         target_psf = imread(psf_path)
 
@@ -34,10 +39,9 @@ def gen_csv():
             size=target_psf.shape[1],
             zsize=target_psf.shape[0],
             zres=100,
-            vec_corr="none",
+            vec_corr="total",
             condition="none",
         )
-
 
         # Normalise PSF and cast to uint8
         target_psf = target_psf / target_psf.max()
@@ -61,6 +65,7 @@ def gen_csv():
         all_pcoefs.append(pcoefs)
         # Simulate HanserPSF with parameters
 
+        model_kwargs['vec_corr'] = 'total'
         result_psf = HanserPSF(**model_kwargs)
         result_psf = apply_aberration(result_psf, PR_result.zd_result.mcoefs, PR_result.zd_result.pcoefs)
 
@@ -68,6 +73,15 @@ def gen_csv():
 
         result_psf = result_psf.PSFi
 
+
+        outpath = '/Users/miguelboland/Projects/uni/phd/smlm_z/src/tmp/'
+
+        result_psf = result_psf.astype(np.float32)
+        target_psf /= target_psf.max()
+        result_psf /= result_psf.max()
+        imwrite(os.path.join(outpath, 'experimental.tif'), target_psf, compress=6)
+        imwrite(os.path.join(outpath, 'synthetic.tif'), result_psf, compress=6)
+        quit()
         target_psf = target_psf / target_psf.max()
         result_psf = result_psf / result_psf.max()
         diff = abs(target_psf - result_psf)
@@ -76,17 +90,19 @@ def gen_csv():
         comb_psf = np.concatenate((target_psf, diff, result_psf), axis=2)
         comb_psf = comb_psf[slice(5, 40, 3)]
         comb_psf = np.concatenate(comb_psf, axis=0)
-        # imshow(comb_psf)
-        # PR_result.plot_convergence()
-        # plt.show()
+        imshow(comb_psf)
+        PR_result.plot_convergence()
+        plt.show()
+        quit()
 
     all_pcoefs = np.stack(all_pcoefs).T
     all_mcoefs = np.stack(all_mcoefs).T
     imgs = np.stack(imgs)[:, np.newaxis].T
     mses = np.stack(mses)[:, np.newaxis].T
     res = np.concatenate((imgs, mses, all_pcoefs, all_mcoefs), axis=0).T
-
-    df = pd.DataFrame(data=res, columns=['img_name', 'mse', *[f'pcoef_{i}' for i in range(n_zerns)], *[f'mcoef_{i}' for i in range(n_zerns)]])
+    quit()
+    df = pd.DataFrame(data=res, columns=['img_name', 'mse', *[f'pcoef_{i}' for i in range(n_zerns)],
+                                         *[f'mcoef_{i}' for i in range(n_zerns)]])
     df.to_csv('./psf_models.csv')
 
 
@@ -100,25 +116,35 @@ def read_csv():
 
     df = pd.concat((coords, df), axis=1)
     print(df.shape)
-    from scipy import stats
     cmap = cm.get_cmap('Spectral')
-    # for c in [f'pcoef_{i}' for i in range(32)]:
-    #     outliers = df[np.abs(df[c]-df[c].mean()) >= (2*df[c].std())]['img_name'].tolist()
-    #     for o in outliers:
-    #         print(f'open /Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/{o}')
-    #     print(outliers)
-    #     # df.plot.scatter('x', 'y', c=c, cmap=cmap)
-    #     # plt.show()
-    df.boxplot(column=[f'pcoef_{i}' for i in range(32)])
-    plt.xticks(rotation=45)
-    plt.show()
-    df.boxplot(column=[f'mcoef_{i}' for i in range(32)])
-    plt.xticks(rotation=45)
-    plt.show()
-    df.boxplot(column='mse')
-    plt.xticks(rotation=45)
-    plt.show()
+    for c in [f'pcoef_{i}' for i in range(4, 9)]:
+        outliers = df[np.abs(df[c] - df[c].mean()) >= (2 * df[c].std())]['img_name'].tolist()
+        for o in outliers:
+            print(f'open /Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/{o}')
+        print(outliers)
+        df.plot.scatter('x', 'y', c=c, cmap=cmap)
+        plt.title(c)
+        plt.show()
+        input()
+    # df.boxplot(column=[f'pcoef_{i}' for i in range(32)])
+    # plt.xticks(rotation=45)
+    # plt.show()
+    # df.boxplot(column=[f'mcoef_{i}' for i in range(32)])
+    # plt.xticks(rotation=45)
+    # plt.show()
+    # df.boxplot(column='mse')
+    # plt.xticks(rotation=45)
+    # plt.show()
 
-if __name__=='__main__':
-    # gen_csv()
-    read_csv()
+
+if __name__ == '__main__':
+    gen_csv()
+    # read_csv()
+    custom_kwargs = model_kwargs
+    custom_kwargs['zres'] = 20
+    custom_kwargs['zsize'] = 100
+    print(custom_kwargs)
+    psf = HanserPSF(**custom_kwargs)
+    psf = apply_named_aberration(psf, 'oblique astigmatism', 1)
+    print(psf.PSFi.shape)
+    show_psf_axial(psf.PSFi)

@@ -1,12 +1,12 @@
+import copy
+import math
 import pickle
 import random
 from collections import OrderedDict
+from functools import partial
 from itertools import product
 
-from imageio import imwrite
-from tqdm import trange
 from pyotf.utils import center_data, prep_data_for_PR
-from scipy.stats import stats
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,18 +15,16 @@ import os
 import pandas as pd
 from multiprocessing import Pool
 from src.config.optics import model_kwargs, voxel_sizes, target_psf_shape
+from src.wavelets.wavelet_data.util import min_max_norm
 from src.data.visualise import show_psf_axial
-from natsort import natsorted
 
 from src.config.datafiles import psf_modelling_file
 
 py_otf = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, 'cnnSTORM', 'src'))
 sys.path.append(py_otf)
-from pyotf.otf import apply_named_aberration, HanserPSF, apply_aberration, apply_named_aberrations
+from pyotf.otf import HanserPSF, apply_aberration, apply_named_aberrations
 
 n_psfs = 10
-
-plt.axis('off')
 
 
 def show_all_psfs(psfs):
@@ -58,8 +56,8 @@ def gen_psf_named_params(params, psf_kwargs=model_kwargs):
     return psf
 
 
-def gen_psf_modelled_param(mcoefs, pcoefs):
-    psf = HanserPSF(**model_kwargs)
+def gen_psf_modelled_param(mcoefs, pcoefs, kwargs=model_kwargs):
+    psf = HanserPSF(**kwargs)
     psf = apply_aberration(psf, mcoefs, pcoefs)
     return psf.PSFi
 
@@ -153,7 +151,7 @@ def gen_dataset_named_params(cg):
     with Pool(8) as p:
         psfs = list(tqdm(p.imap_unordered(gen_psf_named_params, cg), total=len(cg)))
     # psfs = [gen_psf_named_params(cfg) for cfg in tqdm(cg)]
-    z_pos = np.linspace(0, target_psf_shape[0] * voxel_sizes[0], target_psf_shape[0])
+    z_pos = np.linspace(0, (target_psf_shape[0] - 1) * voxel_sizes[0], target_psf_shape[0])
     return psfs, z_pos
 
 
@@ -162,9 +160,64 @@ def apply_normal_noise(coefs):
     return coefs + noise
 
 
-def gen_dataset(n_psfs):
+def _gen_dataset(mcoefs, pcoefs, normalise, num_ref_psfs, custom_kwargs, noise, *args):
+    i = random.randint(0, num_ref_psfs - 1)
+    # mcoef = apply_normal_noise(mcoefs[i])
+    # pcoef = apply_normal_noise(pcoefs[i])
+    mcoef = mcoefs[i]
+    pcoef = pcoefs[i]
+    psf = gen_psf_modelled_param(mcoef, pcoef, kwargs=custom_kwargs)
+
+    psf = psf.astype(np.float)
+    psf = psf / psf.max()
+
+    if noise:
+        noise_level = 0.3 * np.max(psf, axis=(1,2))
+        psf += noise_level[:, np.newaxis, np.newaxis]
+        psf = (psf / psf.max() * 255)
+
+        psf = np.random.poisson(psf)
+
+    # Stack normalisation
+    if normalise == 'stack':
+        psf = psf / psf.max()
+    else:
+        # Image-wise normalisation
+        # Max value
+        # axial_max = psf.max(axis=(1, 2))
+        # psf = psf / axial_max[:, None, None]
+
+        # Min-max
+        psf = min_max_norm(psf)
+    return psf
+
+
+def get_highres_model_kwargs(zres=40):
+    zrange = 1000
+    zsize = (2 * zrange) / zres
+
+    high_res_kwargs = copy.deepcopy(model_kwargs)
+
+    high_res_kwargs['zsize'] = math.ceil(zsize)
+    high_res_kwargs['zres'] = zres
+    return high_res_kwargs
+
+
+def poisson_psf(psf):
+    return np.random.poisson(psf)
+
+
+def gen_dataset(n_psfs, normalise='img-wise', override_kwargs=None, noise=False):
     df = pd.read_csv(psf_modelling_file)
-    df = df.loc[df['mse'] <= df['mse'].quantile(0.25)]
+    print(f'{df.shape[0]} datapoints')
+    df = df.loc[df['mse'] <= 0.05]
+    del df['mse']
+    print(f'{df.shape[0]} after filter by MSE')
+    # df = df[(np.abs(stats.zscore(df)) < 2).all(axis=1)]
+    # print(f'{df.shape[0]} after filter by outliers')
+
+    print(df.shape)
+
     cols = list(df)
     pcoef_cols = [c for c in cols if 'pcoef' in c]
     mcoef_cols = [c for c in cols if 'mcoef' in c]
@@ -175,52 +228,54 @@ def gen_dataset(n_psfs):
     # pcoefs = pcoefs.mean(axis=0)
     # mcoefs = mcoefs.mean(axis=0)
     num_ref_psfs = len(pcoefs)
+    custom_kwargs = get_highres_model_kwargs(10)
 
-    psfs = []
+    if override_kwargs:
+        custom_kwargs.update(override_kwargs)
 
-    for _ in trange(n_psfs):
-        i = random.randint(0, num_ref_psfs-1)
-        mcoef = apply_normal_noise(mcoefs[i])
-        pcoef = apply_normal_noise(pcoefs[i])
-        psf = gen_psf_modelled_param(mcoef, pcoef)
-        psf = psf.astype(np.float)
-        psf = psf/psf.max()
-        psfs.append(psf)
+    pfunc = partial(_gen_dataset, mcoefs, pcoefs, normalise, num_ref_psfs, custom_kwargs, noise)
+    with Pool(8) as p:
+        psfs = list(tqdm(p.imap_unordered(pfunc, range(n_psfs)), total=n_psfs))
 
     psfs = np.stack(psfs, axis=0)
-    z_pos = np.linspace(0, target_psf_shape[0] * voxel_sizes[0], target_psf_shape[0])
 
-    # show_all_psfs(psfs)
-
-    # Save
+    min_zpos = -custom_kwargs['zsize'] / 2 * custom_kwargs['zres']
+    max_zpos = (custom_kwargs['zsize'] / 2 - 1) * custom_kwargs['zres']
+    z_pos = np.linspace(min_zpos, max_zpos , custom_kwargs['zsize'])
     return psfs, z_pos
 
-# def gen_dataset(*args, **kwargs):
-#     # DEBUG to generate pyOTF datasets
-#     configs = cg
-#     psfs = [gen_psf_named_params_raw_psf(cfg) for cfg in tqdm(configs)]
-#
-#
-#     # psfs = [gen_psf_named_params_raw_psf({'oblique astigmatism': 1}, model_kwargs)]
-#
-#     psfs = np.stack(psfs, axis=0)
-#     z_pos = np.linspace(0, target_psf_shape[0] * voxel_sizes[0], target_psf_shape[0])
-#
-#     show_all_psfs(psfs)
-#
-#     # Save
-#     return psfs, z_pos
+
+def visualise_modelling_results():
+    df = pd.read_csv(psf_modelling_file)
+    print(df)
+    mcoefs = df[[c for c in list(df) if 'mcoef' in c]].to_numpy()
+    pcoefs = df[[c for c in list(df) if 'pcoef' in c]].to_numpy()
+
+    for mcoef, pcoef in zip(mcoefs, pcoefs):
+        psf = gen_psf_modelled_param(mcoef, pcoef)
+        show_psf_axial(psf)
+        plt.show()
 
 
 if __name__ == '__main__':
-    psfs, z_pos = gen_dataset(1)
-    z_pos = np.tile(z_pos, psfs.shape[0])
-    psfs = np.concatenate(psfs, axis=0)
+    psfs, zpos = gen_dataset(1, noise=True)
+    plt.imshow(psfs[0][30])
+    plt.show()
 
-    for psf, z in zip(psfs, z_pos):
-        print(psf.shape)
-        fname = f'/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/tmp/{z}.png'
-        imwrite(fname, psf)
+    print(psfs.shape)
+    print(zpos.shape)
+    print(zpos.min(), zpos.max())
+    show_psf_axial(psfs[0])
+    quit()
+    psf2, _ = gen_dataset(1, noise=True)
+
+    psfs = [psfs[0], psf2[0]]
+    show_all_psfs(psfs)
+
+    # for psf, z in zip(psfs, z_pos):
+    #     print(psf.shape)
+    #     fname = f'/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/tmp/{z}.png'
+    #     imwrite(fname, psf)
     # psfs, z_pos = gen_dataset()
     # show_all_psfs(psfs)
 
