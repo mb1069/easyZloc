@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import scipy.io as sio
 from skimage import io
@@ -7,8 +9,15 @@ from glob import glob
 
 # Use ImageJ macro to generate bead frames, then use this code to
 # extract bead PSFs and positions
+from tifffile import imread, imshow, imwrite
+from tqdm import tqdm
+
 from src.data import image_processing
-from src.zernike_decomposition.gen_psf import min_max_norm
+from src.wavelets.wavelet_data.datasets import JonnyDataSource
+from src.wavelets.wavelet_data.util import limit_data_range, min_max_norm, localisation2pixel, cut_image_stack, \
+    filter_localisations
+from src.data.estimate_offset import estimate_offset
+import matplotlib.pyplot as plt
 
 
 def process_jonny_datadir(directory, bound=16, y_dims=1, pixel_size=106, normalise_images=True, datasets=None):
@@ -36,6 +45,110 @@ def process_jonny_datadir(directory, bound=16, y_dims=1, pixel_size=106, normali
     print(f'Collected {x_train.shape[0]} datapoints')
     print(f'Z-range: {y_train.min()} - {y_train.max()}')
     return x_train, y_train
+
+
+class DatasetWrapper:
+    def __init__(self, image, csv_df, emitters, z_pos=None):
+        self.image = image
+        self.csv_df = csv_df
+        self.emitters = emitters
+        self.z_pos = z_pos
+
+
+def load_experimental_bead_stack(image, csv, bound=20, max_psfs=1000000000):
+    voxel_sizes = (10, 106, 106)
+    image = imread(image)
+    df = pd.read_csv(csv)
+    # df = df[df['intensity [photon]'] > 6000]
+    # Convert to nm for thresholding
+
+    df = filter_localisations(df, image.shape, bound, voxel_sizes)
+
+    pixel_x, pixel_y = localisation2pixel(df, voxel_sizes)
+    pixel_x = np.round(pixel_x).astype(int)
+    pixel_y = np.round(pixel_y).astype(int)
+    emitter_coords = list(zip(pixel_x, pixel_y))
+
+    psfs = []
+    z_poss = []
+    for i, coord in enumerate(tqdm(emitter_coords)):
+        psf = cut_image_stack(image, coord, width=bound)
+        psfs.append(psf)
+
+        plt.imshow(psf[psf.shape[0]//2])
+        plt.show()
+        try:
+            z_pos = estimate_offset(psf, voxel_sizes)
+        except RuntimeError:
+            continue
+
+        z_poss.append(z_pos)
+
+        if i > max_psfs:
+            break
+
+    psfs = np.concatenate(psfs)
+    z_poss = np.concatenate(z_poss)
+    z_range = 10000
+    psfs, z_poss = limit_data_range(psfs, z_poss, z_range=z_range)
+
+    print(f'Z range: {z_poss.min()} - {z_poss.max()}')
+    return DatasetWrapper(image, df, psfs, z_poss)
+
+
+def load_experimental_sample(image, csv, pixel_size=106, bound=20, max_psfs=1000000):
+    voxel_sizes = (100, 106, 106)
+    image = imread(image)
+    df = pd.read_csv(csv)
+    # df = df[df['intensity [photon]'] > 6000]
+    # Convert to nm for thresholding
+
+    df = filter_localisations(df, image.shape, bound, voxel_sizes, edges=True)
+
+    pixel_x, pixel_y = localisation2pixel(df, voxel_sizes)
+    pixel_x = np.round(pixel_x).astype(int)
+    pixel_y = np.round(pixel_y).astype(int)
+    emitter_coords = list(zip(pixel_x, pixel_y))
+
+    psfs = []
+    for i, coord in enumerate(tqdm(emitter_coords)):
+        psf = cut_image_stack(image, coord, width=bound)
+        psfs.append(psf)
+
+        if i < 100:
+            dirname = os.path.join(os.path.dirname(csv), 'tmp')
+            os.makedirs(dirname, exist_ok=True)
+            outfile = os.path.join(dirname, f'{i}_emitter.tif')
+            imwrite(outfile, psf, compress=6)
+
+        if i > max_psfs:
+            break
+
+    psfs = np.array(psfs)
+
+    dataset = DatasetWrapper(image, df, psfs)
+    return dataset
+
+
+def load_experimental_datasets(name):
+    bpath = '/Volumes/Samsung_T5/uni/smlm/experimental_data/'
+    if not os.path.exists(bpath):
+        bpath = '/data/mdb119/smlm/data/experimental_data/'
+        if not os.path.exists(bpath):
+            bpath = '/home/miguel/Projects/uni/data/experimental/'
+    base_data_dir = Path(bpath)
+    bead_dir = base_data_dir / 'bead_stack'
+    bead_img = bead_dir / 'red_z_1_MMStack_Pos0.ome.tif'
+    bead_csv = bead_dir / 'red_z_1_MMStack_Pos0.csv'
+
+    exp_dir = base_data_dir / 'sample/red_wf_26_storm_1'
+    exp_img = exp_dir / '2450163/red_wf_26_storm_1_MMStack_Pos0_final_2D.ome.tiff'
+    exp_csv = exp_dir / '2450163/red_wf_26_storm_1_MMStack_Pos0_final_alt.csv'
+
+    if name == 'bead_stack':
+        return load_experimental_bead_stack(bead_img, bead_csv)
+    elif name == 'sample':
+        return load_experimental_sample(exp_img, exp_csv)
 
 
 def process_jonny_tif(image, localisations_csv, pixel_size=106, bound=16, normalise_images=True, known_zpos=True):
@@ -168,6 +281,7 @@ def process_multiple_MATLAB_data(dirname, psf_paths: list, zpos_path, normalise_
     if X_train.shape[0] != y_train.shape[0]:
         print("Warning: Number of PSFs from combined files and number of z-positions are different!")
     return X_train, y_train
+
 
 # def process_STORM_zstack(image, emitter_positions, z_data, bound=16, y_dims=1,
 #                          intensity_threshold=10000, filter_points=True,
@@ -422,3 +536,39 @@ def process_multiple_MATLAB_data(dirname, psf_paths: list, zpos_path, normalise_
 #     X_test, y_test = X[test_idx], y[test_idx]
 #
 #     return X_train, y_train, X_test, y_test
+
+if __name__ == '__main__':
+    d = load_experimental_datasets('bead_stack')
+    # datasets = load_experimental_datasets()
+    # for k, d in datasets.items():
+    #     i = 0
+    #     print(k)
+    #
+    #     for img in (d[0] if d[0].ndim == 3 else d):
+    #         imshow(img / img.max())
+    #         plt.title(k)
+    #         plt.show()
+    #         if i == 10:
+    #             break
+    #         i += 1
+    #     print(k)
+    #     print(d[0].shape, d[1].shape)
+    #     print('Pixel values', d[0].min(), d[0].max())
+    #     print('Z values', d[1].min(), d[1].max())
+
+
+def load_jonny_datasource(img_names=None, max_psfs=None, z_range=None):
+    ds = JonnyDataSource(img_names=img_names)
+    iter_dataset = ds.get_all_emitter_stacks(bound=20, max_psfs=max_psfs, z_range=z_range)
+    psfs = []
+    z_pos = []
+    for psf, z in tqdm(iter_dataset, total=max_psfs):
+
+        psfs.append(psf)
+        z_pos.append(z)
+
+    X = np.concatenate(psfs).squeeze()
+    y = np.concatenate(z_pos).squeeze()
+    print(f'Z range: {y.min()} - {y.max()}')
+
+    return X, y

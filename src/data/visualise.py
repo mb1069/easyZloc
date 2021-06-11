@@ -1,7 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.pyplot import figure
-from pyotf.utils import prep_data_for_PR
 from skimage import img_as_ubyte, io
 import glob
 from tifffile import imread
@@ -9,6 +8,7 @@ from random import sample
 
 
 def view_modelled_psfs():
+    from pyotf.utils import prep_data_for_PR
     psfs = []
     for psf_path in list(sample(glob.glob('/Users/miguelboland/Projects/uni/phd/smlm_z/raw_data/jonny_psf_emitters_large/*.tif'), 15)):
         psf = imread(psf_path)
@@ -18,9 +18,8 @@ def view_modelled_psfs():
     show_psf_axial(psfs)
 
 
-def show_psf_axial(psf):
+def show_psf_axial(psf, title=None):
     plt.axis('off')
-    figure(figsize=(10, 10))
     psf = np.copy(psf)
 
     perc_disp = 0.6
@@ -30,19 +29,18 @@ def show_psf_axial(psf):
     sub_psf = np.concatenate(psf[slice(start, end + 1, 2)], axis=0)
     sub_psf = sub_psf / sub_psf.max()
     sub_psf = img_as_ubyte(sub_psf)
-
+    if title:
+        plt.title(title)
     io.imshow(sub_psf)
-    io.show()
+
     plt.axis('on')
-
-    return
-
-    fig = plt.figure()
-    fig.set_size_inches(*[dpi / s for s in sub_psf.shape])
-    ax = plt.Axes(fig, [0., 0., 1., 1.])
-    ax.set_axis_off()
-    fig.add_axes(ax)
-    ax.imshow(sub_psf)
+    #
+    # fig = plt.figure()
+    # fig.set_size_inches(*[dpi / s for s in sub_psf.shape])
+    # ax = plt.Axes(fig, [0., 0., 1., 1.])
+    # ax.set_axis_off()
+    # fig.add_axes(ax)
+    # ax.imshow(sub_psf)
 
     plt.show()
     # plt.subplots_adjust(top=1, bottom=0, right=1, left=0,
