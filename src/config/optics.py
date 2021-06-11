@@ -1,8 +1,8 @@
+# All tuples in format Z X Y
 voxel_sizes = (100, 85, 85)
-# Z X Y
 
 bounds = 20
-target_psf_shape = (41, bounds*2, bounds*2)
+target_psf_shape = (41, bounds * 2, bounds * 2)
 
 model_kwargs = dict(
     wl=660,
@@ -15,3 +15,5 @@ model_kwargs = dict(
     vec_corr="none",
     condition="none",
 )
+
+fwhm = (1040, 260, 260)

@@ -1,6 +1,11 @@
 import numpy as np
 import pandas as pd
 from skimage import io, feature
+from tqdm import tqdm, trange
+from scipy.spatial.distance import cdist
+
+from src.wavelets.wavelet_data.util import cut_image_stack
+from src.data.estimate_offset import estimate_offset
 
 
 def normalise_image(image_data_array, bit_16=True):  # Normalize images to 0 - 1
@@ -32,7 +37,6 @@ def cut_image(image, center, width=16, show=False):
     # NOTE: for some reason numpy images seem to have x and y swapped in the logical
     # order as would be for a coordinate point (x,y). I.e. point x,y in the image
     # is actually image[y,x]
-
     x_min, x_max = int(center[1] - width), int(center[1] + width)
     y_min, y_max = int(center[0] - width), int(center[0] + width)
     cut = image[x_min:x_max, y_min:y_max]
@@ -55,12 +59,25 @@ def filter_points(points: pd.DataFrame, bound=16):
     # Reset point indices in case we have already filtered points out before this step
     points = points.reset_index(drop=True)
 
-    x = points['x']
-    y = points['y']
-    for i in range(len(points) - 1):
-        for j in range(i + 1, len(points)):
-            x_diff = x[j]-x[i]
-            y_diff = y[j]-y[i]
+    points = points.sample(n=10000)
+    points = points.reset_index(drop=True)
+
+    df = points[['x', 'y']].to_numpy()
+    print(df.shape)
+    m = cdist(df, df)
+    print(m.shape)
+    np.fill_diagonal(m, np.inf)
+    print(m.shape)
+    m = np.min(m, axis=1).squeeze()
+    points_to_keep = np.argwhere(m > bound).squeeze()
+
+    points = points.loc[points_to_keep]
+    print(points.shape)
+    return points
+    for i in trange(len(x) - 1):
+        for j in range(i + 1, len(x)):
+            x_diff = x[j] - x[i]
+            y_diff = y[j] - y[i]
             dist = np.linalg.norm([x_diff, y_diff])
             if dist <= bound:
                 rejected_points.add(i)
@@ -93,23 +110,30 @@ def get_emitter_data(image, points, bound=16, normalise=True, with_zpos=True):
         image = normalise_image(image)
 
     # Check if emitters are near edge of image so PSF cannot be cropped properly
-    for i in points.index:
+    for i in tqdm(points.index):
         if points["x"][i] - bound < 0 or points["x"][i] + bound > image.shape[0]:
             continue
         if points["y"][i] - bound < 0 or points["y"][i] + bound > image.shape[1]:
             continue
 
         # Cut out image with emitter i at center.
-        psf = cut_image(image,
-                        (points["x"][i], points["y"][i]),
+        if len(image.shape) == 3:
+            psf = cut_image_stack(image, (points["x"][i], points["y"][i]),
                         width=bound)
+        else:
+            psf = cut_image(image,
+                            (points["x"][i], points["y"][i]),
+                            width=bound)
 
         # Append to respective arrays
-
+        print(psf.shape)
         image_data = np.append(image_data, [psf], axis=0)
 
         if with_zpos:
-            z_position = points["z"][i]  # Corresponding z-pos if available
+            if with_zpos == 'corrected':
+                z_position = estimate_offset(psf)
+            else:
+                z_position = points["z"][i]  # Corresponding z-pos if available
             z_data = np.append(z_data, z_position)
 
     # Delete zeroth initiated elements
