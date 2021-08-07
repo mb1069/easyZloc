@@ -25,7 +25,6 @@ def resize_img(img):
     height = 256
     width = 256
     # width = int((height / img.shape[1]) * img.shape[2])
-
     new_img = jnp.zeros((img.shape[0], height, width))
     for i in range(len(img)):
         img_z = img[i]

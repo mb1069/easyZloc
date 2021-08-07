@@ -1,21 +1,11 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
 import xgboost
 import matplotlib.pyplot as plt
-from src.autofocus.data import gather_data, imgs
+from src.autofocus.data import gather_data, split_dataset, remove_low_variance_features
+from src.autofocus.config import cfgs, get_cfg_images, dwt_level
 import numpy as np
 
-
-def split_dataset(xs, ys):
-    x_train, x_other, y_train, y_other = train_test_split(xs, ys, train_size=0.8)
-    x_val, x_test, y_val, y_test = train_test_split(x_other, y_other, train_size=0.5)
-
-    return {
-        'train': (x_train, y_train),
-        'val': (x_val, y_val),
-        'test': (x_test, y_test)
-    }
 
 
 def eval(model, test_dataset):
@@ -85,6 +75,7 @@ def train_model(dataset):
         # 'sampling_method': 'gradient_based',
     }
 
+    # Loop used to adjust parameters if GPU not available
     for i in range(2):
         try:
             model = XGBRegressor(**model_options, learning_rate=0.05)
@@ -106,34 +97,38 @@ def train_model(dataset):
 
 
 def main():
-    dwt_level = 6
-    # Use 0:cutoff for training/validation and cutoff:end for test
 
-    cutoff = int(len(imgs) * 0.8)
-    xs, ys = gather_data(slice(0, cutoff), dwt_level=dwt_level)
+    cfg_key = 'slit_50nm'
+    # Select cfg from config.py
+    cfg = cfgs[cfg_key]    
 
-    xs_vars = np.var(xs, axis=0)
+    imgs = get_cfg_images(cfg)
 
-    cols = np.where(xs_vars > 0.1)[0]
-    print(f'Removing {xs.shape[1] - len(cols)} features with low variance.')
-    xs = xs[:, cols]
 
-    print(f'X: {round(xs.nbytes / (10 ** 9), 3)} GB')
-    print(f'Y: {round(ys.nbytes / (10 ** 9), 3)} GB')
+    if 'cylindrical' in cfg_key:
+        # Cylindrical data only has 1 or two stacks, so train/val/test sets are not from individual stacks
+        xs, ys = gather_data(imgs, slice(0, len(imgs)+1), dwt_level=dwt_level)
+        xs, _ = remove_low_variance_features(xs)
+        dataset = split_dataset(xs, ys)
+    else:
+        # Slit datasets contain more stacks, so 20% of stacks are kept as a separate test
+        # Use 0:train_test_split for training/validation and train_test_split:end for test
+        train_test_split = int(len(imgs) * 0.8)
+        xs, ys = gather_data(imgs, slice(0, train_test_split), dwt_level=dwt_level)
+        xs, cols = remove_low_variance_features(xs)
+        dataset = split_dataset(xs, ys)
 
-    # vt = VarianceThreshold(threshold=0.1)
-    # xs = vt.fit_transform(xs)
+        val_xs, val_ys = gather_data(imgs, slice(train_test_split, len(imgs)), dwt_level=dwt_level)
 
-    dataset = split_dataset(xs, ys)
+        val_xs = val_xs[:, cols]
+
+        validation_stacks = (val_xs, val_ys)
+    
     model = train_model(dataset)
 
-    val_xs, val_ys = gather_data(slice(cutoff, len(imgs)), dwt_level=dwt_level)
-    # val_xs = vt.transform(val_xs)
-
-    val_xs = val_xs[:, cols]
-
-    validation_stacks = (val_xs, val_ys)
-    # eval(model, validation_stacks)
+    # Extra validation step on withheld stacks 
+    if 'slit' in cfg_key:
+        eval(model, validation_stacks)
 
 
 if __name__ == '__main__':
