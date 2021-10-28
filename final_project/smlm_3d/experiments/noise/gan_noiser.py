@@ -34,7 +34,7 @@ import os
 
 
 log_dir = os.path.join(os.path.dirname(__file__), 'logdir')
-batch_size = 256
+batch_size = 512
 
 file_writer = tf.summary.create_file_writer(log_dir)
 
@@ -125,7 +125,7 @@ def upsample(filters, size, apply_dropout=False):
     return result
 
 def load_generator(img_shape):
-    fg = 256
+    fg = 64
     def conv2d(layer_input, filters, f_size=4, bn=True):
         """Layers used during downsampling"""
         d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same')(layer_input)
@@ -233,8 +233,8 @@ class DANN(keras.Model):
     
     def compile(self):
         super(DANN, self).compile(metrics=['accuracy'])
-        self.d_optimizer = keras.optimizers.Adam(learning_rate=0.00001)
-        self.g_optimizer = keras.optimizers.Adam(learning_rate=0.001)
+        self.d_optimizer = keras.optimizers.Adam(learning_rate=0.0000001)
+        self.g_optimizer = keras.optimizers.Adam(learning_rate=1)
         # self.r_optimizer = keras.optimizers.Adam(learning_rate=0.0001)
         self.loss_fn = keras.losses.BinaryCrossentropy()
         # self.regression_loss_fn = keras.losses.MeanSquaredError()
@@ -335,6 +335,11 @@ class DANN(keras.Model):
             'd_loss': self.disc_loss_tracker.result(),
             # 'r_loss': self.regression_loss_tracker.result(),
         }
+
+def plot_history(history):
+    plt.plot(history.history['g_loss'])
+    plt.plot(history.history['d_loss'])
+    plt.show()
 def main():
     dataset = load_datasets()
     image_shape = (32, 32, 1)
@@ -346,8 +351,8 @@ def main():
     callbacks = [
         tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     ]
-    model.fit(dataset['train'], batch_size=batch_size, epochs=500, callbacks=callbacks)
-
+    history = model.fit(dataset['train'], batch_size=batch_size, epochs=500, callbacks=callbacks)
+    plot_history(history)
 
 if __name__=='__main__':
     main()

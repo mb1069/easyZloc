@@ -13,6 +13,17 @@ import matplotlib.pyplot as plt
 from tqdm.contrib.concurrent import process_map
 
 SEED = 42
+
+DEFAULT_WAVELET = 'sym4'
+
+DEFAULT_WAVELET_LEVEL = 8
+
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
 def limit_data_range(psfs, peaks, z_range=1000, min_z=None, max_z=None):
     if min_z and max_z:
         lower_lim = min_z
@@ -31,15 +42,19 @@ def min_max_norm(psf):
     return psf
 
 
-
 def get_base_data_path():
-    bpath = '/Volumes/Samsung_T5/uni/smlm/experimental_data/'
-    if not os.path.exists(bpath):
-        bpath = '/data/mdb119/smlm/data/experimental_data/'
-        if not os.path.exists(bpath):
-            bpath = '/home/miguel/Projects/uni/data/smlm_3d/'
-    base_data_dir = Path(bpath)
-    return base_data_dir
+    bpaths = [
+        '/Volumes/Samsung_T5/uni/smlm/experimental_data/',
+        '/data/mdb119/smlm/data/experimental_data/',
+        '/home/miguel/Projects/uni/data/smlm_3d/',
+        '/Users/miguelboland/Projects/uni/phd/smlm_z/final_project/smlm_3d/mini_data_dir'
+    ]
+    try:
+        while not os.path.exists(bpaths[-1]):
+            bpaths.pop()
+    except IndexError:
+        raise EnvironmentError('Base path to datafiles in incorrectly set')
+    return Path(bpaths[-1])
 
 
 def split_for_training(X, y):
@@ -60,30 +75,28 @@ def split_for_training(X, y):
     }
 
 
-def dwt_transform(img, wavelet='sym4', level=8):
+def dwt_transform(img, wavelet=DEFAULT_WAVELET, level=DEFAULT_WAVELET_LEVEL):
     img = img / img.max()
     coeffs2 = pywt.wavedecn(img, wavelet, level=level)
     coeffs = pywt.coeffs_to_array(coeffs2)[0].flatten()
-    print(coeffs.shape)
-    print(pywt.ravel_coeffs(coeffs2).shape)
-    quit()
     return coeffs
 
 
-def dwt_dataset(psfs, wavelet='sym4', level=8):
+def dwt_dataset(psfs, wavelet=DEFAULT_WAVELET, level=DEFAULT_WAVELET_LEVEL):
     print(f'Running Wavelet transform for dataset at level: {level}')
     func = partial(dwt_transform, wavelet=wavelet, level=level)
     x = list(map(func, psfs.squeeze()))
     x = np.stack(x)
     return x
 
-def dwt_inverse_transform(dwt, wavelet='sym4', level=8):
+
+def dwt_inverse_transform(dwt, wavelet=DEFAULT_WAVELET, level=DEFAULT_WAVELET_LEVEL):
     dwt = pywt.array_to_coeffs(dwt)
     img = pywt.waverecn(dwt, wavelet, level)
-    print(img.shape)
     return img
 
-def dwt_inverse_dataset(dwt, wavelet='sym4', level=8):
+
+def dwt_inverse_dataset(dwt, wavelet=DEFAULT_WAVELET, level=DEFAULT_WAVELET_LEVEL):
     print(f'Running Wavelet transform for dataset at level: {level}')
     func = partial(dwt_inverse_transform, wavelet=wavelet, level=level)
     x = list(map(func, dwt.squeeze()))

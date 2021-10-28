@@ -49,10 +49,10 @@ def load_discriminator():
 def load_datasets():
     z_range = 1000
 
-    dataset = 'openframe'
-    train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range, transform_data=False, add_noise=True)
+    dataset = 'paired_bead_stacks'
+    train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range, transform_data=False, add_noise=False)
 
-    exp_dataset = TrainingDataSet(dataset_configs[dataset]['sphere_ground_truth'], z_range, transform_data=False)
+    exp_dataset = TrainingDataSet(dataset_configs[dataset]['experimental'], z_range, transform_data=False, add_noise=False)
 
     datasets = {k: [[], []] for k in train_dataset.data}
     for k in datasets:
@@ -96,12 +96,11 @@ def view_feature_maps(dataset, model):
 
 def main():
     model_path = os.path.join(os.path.dirname(__file__), 'results', 'classifier.h5')
-    print(model_path)
     dataset = load_datasets()
 
     model = load_discriminator()
     model.compile(loss=tf.keras.losses.BinaryCrossentropy(), optimizer=keras.optimizers.Adam(learning_rate=0.001, decay=1e-6),metrics=['accuracy'])
-
+    print(model_path)
     if os.path.exists(model_path):
         model.build(input_shape=dataset['train'][0][0:1].shape)
         model.load_weights(model_path)
@@ -117,7 +116,7 @@ def main():
             print(d, dataset[d][0].shape, dataset[d][1].shape)
         model.fit(*dataset['train'], epochs=100, validation_data=(*dataset['val'],), callbacks=callbacks)
         model.save_weights(model_path)
-    view_feature_maps(dataset, model)
+    # view_feature_maps(dataset, model)
 
 
 if __name__=='__main__':
