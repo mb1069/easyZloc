@@ -6,6 +6,18 @@ import glob
 from tifffile import imread
 from random import sample
 
+from PIL import Image
+
+def gen_gif(psf, fname):
+    psf = psf / psf.max()
+    psf *= 255
+    print(psf.min(), psf.max())
+    imgs = [Image.fromarray(img) for img in psf]
+    # duration is the number of milliseconds between frames; this is 40 frames per second
+    imgs[0].save(fname, save_all=True, append_images=imgs[1:], duration=50, loop=0)
+
+
+
 def scatter_yz(coords, title=None):
     xs, ys, zs = coords[:, 0], coords[:, 1], coords[:, 2]
     plt.scatter(ys, zs)
@@ -14,6 +26,7 @@ def scatter_yz(coords, title=None):
     if title:
         plt.title(title)
     plt.show()
+
 
 def scatter_3d(coords, title=None):
     print(title, coords.shape)

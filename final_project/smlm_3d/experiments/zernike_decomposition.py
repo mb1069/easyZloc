@@ -48,7 +48,8 @@ def diff_func(kwargs, target_psf, coefs):
 
 
 def optimize_model(config, target_psf, n_coefs, target_pcoefs=None, plot=True):
-
+    target_psf = (target_psf * 255 * 255).astype(np.int64)
+    
     target_psf = prep_data_for_PR(target_psf, multiplier=1.1)
     target_psf = target_psf / target_psf.max()
 
@@ -66,7 +67,7 @@ def optimize_model(config, target_psf, n_coefs, target_pcoefs=None, plot=True):
 
     initial_mcoefs = np.random.uniform(0, 1, (n_coefs,))
 
-    opt_init, opt_update, get_params = optimizers.sgd(25)
+    opt_init, opt_update, get_params = optimizers.sgd(20)
     opt_state = opt_init((initial_pcoefs.copy(), initial_mcoefs.copy()))
 
     func = partial(diff_func, kwargs, target_psf)
@@ -141,17 +142,18 @@ def optimize_model(config, target_psf, n_coefs, target_pcoefs=None, plot=True):
 
     return best_iter, all_data
 
-train_config = dataset_configs['olympus']['training']
+train_config = dataset_configs['openframe']['training']
 train_dataset = ExperimentalDataSet(train_config, lazy=True)
 train_dataset.prepare_debug()
 
-sphere_config = dataset_configs['olympus']['sphere_ground_truth']
+sphere_config = dataset_configs['openframe']['sphere_ground_truth']
 sphere_dataset = ExperimentalDataSet(sphere_config, lazy=True)
 sphere_dataset.prepare_debug()
 
 n_coefs = 16
 records = []
-for emitter_id in trange(100):
+n_emitters = min(10, train_dataset.total_emitters)
+for emitter_id in trange(n_emitters):
     try:
         psf, dwt, coords, z, record = train_dataset.debug_emitter(emitter_id, z_range=1000)
         coeffs = optimize_model(train_config, psf, n_coefs, plot=False)[0]
@@ -161,17 +163,17 @@ for emitter_id in trange(100):
     except RuntimeError:
         pass
 
-    try:
-        psf, dwt, coords, z, record = sphere_dataset.debug_emitter(emitter_id, z_range=1000)
-        coeffs = optimize_model(sphere_config, psf, n_coefs, plot=False)[0]
-        coeffs = {k: v for k, v in coeffs.items() if 'pcoef' in k or k == 'mse'}
-        coeffs['type'] = 'sphere'
-        records.append(coeffs)
-    except RuntimeError:
-        pass
+    # try:
+    #     psf, dwt, coords, z, record = sphere_dataset.debug_emitter(emitter_id, z_range=1000)
+    #     coeffs = optimize_model(sphere_config, psf, n_coefs, plot=False)[0]
+    #     coeffs = {k: v for k, v in coeffs.items() if 'pcoef' in k or k == 'mse'}
+    #     coeffs['type'] = 'sphere'
+    #     records.append(coeffs)
+    # except RuntimeError:
+    #     pass
 
-# df = pd.DataFrame.from_records(records)
-# df.to_csv('tmp.csv', index=False)
+df = pd.DataFrame.from_records(records)
+df.to_csv('tmp.csv', index=False)
 df = pd.read_csv('tmp.csv')
 for col in list(df):
     if col =='type':
