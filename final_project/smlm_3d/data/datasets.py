@@ -24,9 +24,7 @@ DEBUG = False
 
 
 class GenericDataSet:
-    filter_emitters_proximity = True
     filter_emitters_edges = True
-    filter_low_intensity_emitters = True
     voxel_sizes = None
     bound = 16
 
@@ -150,7 +148,6 @@ class GenericDataSet:
         if edges:
             df = df[df.apply(check_borders, axis=1)]
             print(f'{df.shape[0]} emitters after borders')
-
         return df
 
     def estimate_ground_truth(self):
@@ -182,6 +179,9 @@ class GenericDataSet:
         psfs, xyz_coords = self.estimate_ground_truth()
         psfs = np.stack(psfs)
         dists_to_plane, _, subset_idx = fit_plane(xyz_coords, subset=True)
+        print(f'{len(subset_idx)} emitters after fitting plane')
+        self.csv_data = self.csv_data.iloc[subset_idx]
+
         psfs = psfs[subset_idx]
 
         min_max_z = psfs[0].shape[0]/2
@@ -228,7 +228,6 @@ class GenericDataSet:
                 psf, z_pos = self.trim_stack(psf, z_pos)
                 xy_coord = np.tile(filtered_df.iloc[i][['x [nm]', 'y [nm]']].to_numpy(), reps=(len(z_pos), 1))
                 zxy_coord = np.hstack((z_pos[:, np.newaxis], xy_coord))
-
 
                 # psf = apply_low_pass_img_stack(psf)
                 psfs.append(psf)
@@ -318,7 +317,7 @@ class TrainingDataSet(GenericDataSet):
         self.all_psfs = psfs
         self.all_coords = zxy_pos
 
-        split_type = 'stacks' 
+        split_type = 'all' 
         if self.split_data:
             if split_type == 'stacks':
                 self.data = split_for_training(psfs, zxy_pos)
@@ -346,7 +345,9 @@ class TrainingDataSet(GenericDataSet):
             psfs = np.stack(psfs)
             coords = np.stack(coords)
             self.data['train'] = [psfs, coords]
-        
+
+        img_center = [[self.img.shape[i]*self.config['voxel_sizes'][i] / 2 for i in [1,2]]]
+
         for k in self.data:
             input_data, zxy_pos = self.data[k]
             if self.transform_data:
@@ -358,7 +359,31 @@ class TrainingDataSet(GenericDataSet):
             else:
                 target_data = zxy_pos[:, 0]
             xy_coords = zxy_pos[:, (1,2)]
-            self.data[k] = [[input_data, self.norm_xy_coords(xy_coords)], target_data]
+
+            # self.data[k] = [[input_data, self.norm_xy_coords(xy_coords)], target_data]
+
+            def cart2pol(coords):
+                x, y = coords
+                rho = np.sqrt(x**2 + y**2)
+                phi = np.arctan2(y, x)
+                return(rho, phi)
+
+            re_mapped_coords = xy_coords - img_center
+            polar_coords = np.apply_along_axis(cart2pol, 1, re_mapped_coords)
+            print('\n')
+            # norm angles to [0, 1]
+            polar_coords[:, 1] = (polar_coords[:, 1] + np.pi) / (2*np.pi)
+
+            # norm distances to [0, 1]
+            img_dims = [self.img.shape[i]*self.config['voxel_sizes'][i] for i in [1,2]]
+            max_distance = np.hypot(*img_dims) / 2
+
+            polar_coords[:, 0] = polar_coords[:, 0] / max_distance
+
+            # dists = cdist(img_center, xy_coords).T
+            # dists = (dists - dists.min()) / (dists.max() - dists.min())
+
+            self.data[k] = [[input_data, polar_coords], target_data]
 
 
 
@@ -476,3 +501,16 @@ class ExperimentalDataSet(GenericDataSet):
         coords[:, 2] -= coord_diff
         print(coord_diff.min(), coord_diff.mean(), coord_diff.max())
         return coords
+
+if __name__=='__main__':
+    from final_project.smlm_3d.config.datasets import dataset_configs
+
+    z_range = 1000
+
+    dataset = 'paired_bead_stacks'
+
+    # train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range, transform_data=False, add_noise=True)
+    exp_dataset = TrainingDataSet(dataset_configs[dataset]['experimental'], z_range, transform_data=False, add_noise=False, split_data=False)
+
+    print(np.stack(exp_dataset.all_psfs).shape)
+    print(exp_dataset.csv_data.shape)
