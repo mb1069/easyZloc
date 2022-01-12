@@ -1,4 +1,4 @@
-from final_project.smlm_3d.data.visualise import scatter_3d
+from final_project.smlm_3d.data.visualise import scatter_3d, show_psf_axial
 from operator import truth
 import os
 
@@ -7,14 +7,18 @@ import numpy as np
 import pandas as pd
 import xgboost
 from xgboost import XGBRegressor
+from scipy.optimize import curve_fit
+
 
 from final_project.smlm_3d.data.datasets import TrainingDataSet, ExperimentalDataSet
-from final_project.smlm_3d.util import get_base_data_path
+from final_project.smlm_3d.util import get_base_data_path, dwt_inverse_transform, chunks
 from final_project.smlm_3d.config.datafiles import res_file
 from final_project.smlm_3d.config.datasets import dataset_configs
+from final_project.smlm_3d.debug_tools.view_dataset_psfs import grid_psfs
+from tifffile import imwrite
 
-DISABLE_LOAD_SAVED = False
-FORCE_LOAD_SAVED = False
+DISABLE_LOAD_SAVED = True
+FORCE_LOAD_SAVED =  False
 DEBUG = False
 
 USE_GPU = True
@@ -31,8 +35,8 @@ model_options = {
     'min_child_weight': 1,
     'verbosity': 1,
     'tree_method': 'gpu_hist',
-    'n_jobs': 8,
-    'nthread': 8
+    'n_jobs': 4,
+    'nthread': 4
 }
 
 def load_model():
@@ -47,9 +51,15 @@ def define_model():
 
     return model
 
-def train_model(dataset, pretrained_model=None):
+def concat_dataset_features(dataset):
     for k, v in dataset.items():
+        dataset[k][0] = np.hstack(dataset[k][0])
         print(k, v[0].shape, v[1].shape)
+
+def train_model(dataset, val_dataset=None):
+    if val_dataset:
+        # Swap existing val_dataset for specified val_dataset
+        dataset['val'] = val_dataset
 
     # # # LightGBM
 
@@ -87,7 +97,8 @@ def train_model(dataset, pretrained_model=None):
                       )
             model.save_model(model_path)
 
-        except xgboost.core.XGBoostError:
+        except xgboost.core.XGBoostError as e:
+            print(e)
             del model_options['tree_method']
             # del model_options['num_parallel_tree']
             continue
@@ -99,32 +110,128 @@ def train_model(dataset, pretrained_model=None):
 
 def measure_error(model, test_dataset):
     x, y = test_dataset
-    y_pred = model.predict(x)
+    y_pred = model.predict(x).squeeze()
     ae = abs(y_pred - y.squeeze())
     return ae
 
-def eval_model(model, test_dataset, title):
+def shift_correction(y, y_pred):
+    f = lambda x, m, c: (x*m) + c 
+    popt, pcov = curve_fit(f, y, y_pred, p0=[1, 0])
+    shift = popt[1]
+    y_pred -= shift
+    # print('Pred shift', np.mean(abs(y_pred-y)))
+    # print('Post shift', np.mean(abs(y_pred-y)))
+    return y_pred
+
+def chunk_stacks(y_pred, y):
+    chunked_y = []
+    chunked_ypred = []
+    chunk_limits = [0] + [i+1 for i in range(len(y)-1) if y[i] > y[i+1]]
+    for i in range(len(chunk_limits)-1):
+        start = chunk_limits[i]
+        end = chunk_limits[i+1]
+
+        chunked_y.append(y[start:end])
+        chunked_ypred.append(y_pred[start:end])
+    return chunked_y, chunked_ypred
+
+def eval_model(model, test_dataset, title, w_shift_correction=False):
     x, y = test_dataset
     y_pred = model.predict(x).squeeze()
     y = y.squeeze()
     ae = abs(y_pred - y)
+    if w_shift_correction:
+        # shifts preds
+        y_pred = shift_correction(y, y_pred)
+
+    ae = abs(y_pred - y)
+    # idx = np.where(ae < np.percentile(ae, 75))
+    # ae = ae[idx]
+    # y = y[idx]
+    # y_pred = y_pred[idx]
     plt.boxplot(ae)
     plt.title(f'{title} MAE: {round(ae.mean(), 4)} STDev: {round(ae.std(), 4)}')
     plt.ylabel('Absolute error (nm)')
     plt.show()
     plt.title(f'{title} MAE: {round(ae.mean(), 4)} STDev: {round(ae.std(), 4)}')
-    plt.scatter(y, y_pred)
+
+    chunked_y, chunked_ypred = chunk_stacks(y_pred, y)
+
+    for stack_y, stack_y_pred in zip(chunked_y, chunked_ypred):
+        plt.plot(stack_y, stack_y_pred)
+
+    # plt.scatter(y, y_pred)
     plt.ylabel('pred')
     plt.xlabel('truth')
     plt.show()
-    
-    df = pd.DataFrame.from_dict({'z_pos': y, 'error': ae})
-    df.to_csv('/home/miguel/Projects/uni/phd/smlm_z/final_project/tmp/tmp.csv')
 
-
+    # df = pd.DataFrame.from_dict({'z_pos': y, 'error': ae})
+    # df.to_csv('/home/miguel/Projects/uni/phd/smlm_z/final_project/tmp/tmp.csv')
 
     print('MAE:', round(ae.mean(), 4))
     return ae.mean(), ae.std()
+
+def inspect_large_errors(model, dataset):
+    x, y = dataset.data['all']
+    y_pred = model.predict(x).squeeze()
+    y = y.squeeze()
+    ae = abs(y_pred - y)
+    print(ae.mean())
+    print(np.median(ae))
+    plt.scatter(y, y_pred)
+    plt.show()
+
+    y_pred = shift_correction(y, y_pred)
+    psfs = np.stack(dataset.all_psfs)
+    coords = np.stack(dataset.all_coords)
+    ae = np.stack(list(chunks(ae, psfs.shape[1])))
+
+    y_pred = np.stack(list(chunks(y_pred, psfs.shape[1])))
+    y = np.stack(list(chunks(y, psfs.shape[1])))
+    
+
+    stack_coords = np.stack([n[0] for n in coords])
+    
+    df = {
+        'errors': ae.mean(axis=1),
+        'x': stack_coords[:, 0],
+        'y': stack_coords[:, 1]
+    }
+
+    df = pd.DataFrame.from_dict(df)
+    # df.plot.scatter('x', 'y', c='errors')
+    # plt.show()
+    dataset.csv_data['errors'] = ae.mean(axis=1)
+
+    dataset.csv_data.to_csv('error_coords.csv')
+    bad_stacks = []
+    good_stacks = []
+    stack_errors = (abs(y - y_pred)).flatten()
+    for i in range(len(y)):
+        # show_psf_axial(psfs[i])
+        plt.plot(y[i], y_pred[i])
+        plt.xlabel('Truth')
+        plt.ylabel('Pred')
+    plt.title(f'Mean error: {str(round(np.mean(stack_errors), 3))} nm, std: {str(round(np.std(stack_errors), 3))}')
+
+    plt.show()
+    print('done')
+    quit()
+
+    
+    stack_errors = [np.mean(abs(y[i]-y_pred[i])) for i in max_errors]
+    low_perc = np.percentile(stack_errors, 25)
+    high_perc = np.percentile(stack_errors, 75)
+
+    good_stacks = psfs[np.where(stack_errors < low_perc)]
+
+    bad_stacks = psfs[np.where(stack_errors >= high_perc)]
+
+    bad_imgs = grid_psfs(bad_stacks)
+    good_imgs = grid_psfs(good_stacks)
+
+    imwrite('bad_localisations.tiff', bad_imgs, compress=6)
+    imwrite('good_localisations.tiff', good_imgs, compress=6)
 
 
 def predict(model, exp_dataset, fname):
@@ -272,18 +379,25 @@ def main():
     # Run on exp data
     z_range = 1000
 
-    dataset = 'openframe'
-    train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range)
-    model = train_model(train_dataset.data)
-    # exp_dataset = TrainingDataSet(dataset_configs[dataset]['sphere_ground_truth'], z_range, add_noise=False)
-    # model2 = train_model(exp_dataset.data)
+
+    dataset = 'paired_bead_stacks'
 
 
+    train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range, transform_data=True, add_noise=False)
+
+    exp_dataset = TrainingDataSet(dataset_configs[dataset]['experimental'], z_range, transform_data=True, add_noise=False, split_data=False)
+
+
+    concat_dataset_features(train_dataset.data)
+    concat_dataset_features(exp_dataset.data)
+
+    # model = train_model(train_dataset.data) 
+
+    model = load_model()
     eval_model(model, train_dataset.data['test'], 'Bead test (bead stack training)')
-    # eval_model(model, exp_dataset.data['test'], 'Sphere (bead stack training)')
+    eval_model(model, exp_dataset.data['all'], 'Sphere (bead stack training)', w_shift_correction=True)
 
-
-
+    inspect_large_errors(model, exp_dataset)
 
 if __name__ == '__main__':
     main()
