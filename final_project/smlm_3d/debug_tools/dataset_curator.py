@@ -1,3 +1,4 @@
+from xml.etree.ElementTree import TreeBuilder
 from final_project.smlm_3d.data.visualise import scatter_3d, show_psf_axial
 from operator import truth
 import os
@@ -26,20 +27,19 @@ def get_key():
 
 def main():
     # Run on exp data
-    z_range = 200
+    z_range = 10000
 
-    cfg = dataset_configs['paired_bead_stacks']['experimental']
+    cfg = dataset_configs['openframe']['sphere']
 
     SMART_SELECTION = False
 
-    train_dataset = TrainingDataSet(cfg, z_range, lazy=True, transform_data=False, normalize_psf=True)
+    train_dataset = TrainingDataSet(cfg, z_range, lazy=True, transform_data=False, normalize_psf=True, filter_emitters_proximity=False)
     train_dataset.prepare_debug()
     # plt.scatter(train_dataset.csv_data['x [nm]'], train_dataset.csv_data['y [nm]'])
-    # plt.show()
+    plt.show()
     records = []
     i = -1
     plt.ion()
-    plt.show()
 
     csv_path = os.path.join(cfg['bpath'], cfg['csv'].replace('.csv', '_filtered.csv'))
     print(csv_path)
@@ -50,10 +50,10 @@ def main():
     reject_ssim_threshold = 0.85
     for i in trange(train_dataset.total_emitters):
         try:
-            psf, dwt, coords, z, record = train_dataset.debug_emitter(i, 1000)
+            psf, dwt, coords, z, record = train_dataset.debug_emitter(i, 100000, True)
         except RuntimeError:
             continue
-        sub_psf = concat_psf_axial(psf, 7)
+        sub_psf = concat_psf_axial(psf, 20, perc_disp=1)
         if len(accepted_images) > 2:
             example_psf = np.stack(accepted_images).mean(axis=(0))
             val = round(ssim(example_psf, psf), 5)
@@ -79,6 +79,7 @@ def main():
         
         if SMART_SELECTION and len(accepted_images) == 10:
             use_ssim_val = True
+        plt.close()
 
 
     pd.DataFrame.from_records(records).to_csv(csv_path, index=False)

@@ -11,13 +11,51 @@ from scipy.spatial.distance import cdist
 
 # from src.wavelets.wavelet_data.datasets.training_dataset import TrainingDataset
 from final_project.smlm_3d.config.datasets import dataset_configs
-from final_project.smlm_3d.data.visualise import scatter_3d, scatter_yz
+from final_project.smlm_3d.data.visualise import plot_with_sphere, scatter_3d, scatter_yz
 from final_project.smlm_3d.config.datafiles import res_file
 # from final_project.smlm_3d.workflow_v2 import load_model
 from final_project.smlm_3d.experiments.deep_learning import load_model
 
 fname = os.path.join(os.path.dirname(__file__), '..', 'tmp/animation.gif')
 
+def sphere_loss(p, radius, fit_data=None):
+    x0, y0, z0 = p
+    x, y, z = fit_data.T
+    return np.sqrt((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2) - radius
+
+def fit_sphere(df, radius):
+    fit_data = df[['x', 'y', 'z']].to_numpy()
+
+    initial_guess = [df['x'].mean(), df['y'].mean(), df['z'].min() + radius]
+
+    low_bounds = [
+        df['x'].min(),
+        df['y'].min(),
+        df['z'].min() + (radius * 0.75),
+    ]
+    high_bounds = [
+        df['x'].max(),
+        df['y'].max(),
+        df['z'].min() + (radius * 1.25),
+    ]
+    print('low', low_bounds)
+    print('initial', initial_guess)
+    print('high', high_bounds)
+    sphere_loss_fn = partial(sphere_loss, radius=radius, fit_data=fit_data)
+    res = least_squares(sphere_loss_fn, initial_guess, bounds=(low_bounds, high_bounds), verbose=True, ftol=1e-16,
+                        xtol=1e-16, max_nfev=100, loss='soft_l1')
+    centre = res.x[0:3]
+    x = ['x', 'y', 'z']
+    plt.plot(x, low_bounds, label='low')
+    plt.plot(x, high_bounds, label='high')
+    plt.plot(x, initial_guess, ':', label='initial')
+    plt.plot(x, centre, label='centre')
+    plt.yscale('log')
+    plt.legend()
+    plt.show()
+    plot_with_sphere(df[x].to_numpy(), centre, radius)
+
+    return centre, res.fun
 
 class SphereDataset:
     radius = 5e5
@@ -64,45 +102,16 @@ class SphereDataset:
 
 
     def double_fit_sphere(self, df):
-        centre, residuals = self.fit_sphere(df)
+        centre, residuals = fit_sphere(df, self.radius)
         # self.plot_with_sphere(self.data, centre)
         residuals = abs(residuals)
         keep_idx = np.where(residuals < np.percentile(residuals, 90))
 
         res_df = df.iloc[keep_idx]
 
-        centre, residuals = self.fit_sphere(res_df)
+        centre, residuals = fit_sphere(res_df, self.radius)
         return centre, residuals, res_df
 
-    def fit_sphere(self, df):
-        fit_data = df[['x', 'y', 'z']].to_numpy()
-
-        initial_guess = [df['x'].mean(), df['y'].mean(), df['z'].min() + self.radius]
-
-        low_bounds = [
-            df['x'].min(),
-            df['y'].min(),
-            df['z'].min() + (self.radius * 0.75),
-        ]
-        high_bounds = [
-            df['x'].max(),
-            df['y'].max(),
-            df['z'].min() + (self.radius * 1.25),
-        ]
-        sphere_loss = partial(self.sphere_loss, fit_data=fit_data)
-        res = least_squares(sphere_loss, initial_guess, bounds=(low_bounds, high_bounds), verbose=True, ftol=1e-16,
-                            xtol=1e-16, max_nfev=100, loss='soft_l1')
-        centre = res.x[0:3]
-        x = ['x', 'y', 'z']
-        plt.plot(x, low_bounds, label='low')
-        plt.plot(x, high_bounds, label='high')
-        plt.plot(x, initial_guess, ':', label='initial')
-        plt.plot(x, centre, label='centre')
-        plt.yscale('log')
-        plt.legend()
-        plt.show()
-
-        return centre, res.fun
 
     def plot_with_sphere(self, df, centre):
         dist_centre = cdist(df[['x', 'y']].to_numpy(), np.array([centre[0:2]]))
@@ -201,13 +210,8 @@ class SphereDataset:
 
         df['z'] = df.apply(get_z_coord, axis=1)
         # Assert coordinates sit on sphere
-        assert sum(self.sphere_loss(sphere_centre, df[['x', 'y', 'z']].to_numpy())) < 1e-5
+        assert sum(sphere_loss(sphere_centre, df[['x', 'y', 'z']].to_numpy()), self.radius) < 1e-5
         return df
-
-    def sphere_loss(self, p, fit_data=None):
-        x0, y0, z0 = p
-        x, y, z = fit_data.T
-        return np.sqrt((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2) - self.radius
 
 def main():
 

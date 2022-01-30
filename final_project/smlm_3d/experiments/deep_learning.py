@@ -136,7 +136,7 @@ class ResNet34(Model):
         x = self.fc2(x)
         x = self.dp2(x)
         x = self.fc3(x)
-        x = tf.tanh(x) * 1000
+        # x = tf.tanh(x) * 1000
         return x
 
 
@@ -177,15 +177,15 @@ def train_model(dataset, val_dataset=None):
 
     callbacks = [
         ReduceLROnPlateau(
-        monitor='loss', factor=0.1, patience=10, verbose=True,
+        monitor='loss', factor=0.1, patience=5, verbose=True,
         mode='min', min_delta=1, cooldown=0, min_lr=0,),
-        EarlyStopping(monitor='val_mean_absolute_error', patience=10, verbose=True, min_delta=1, restore_best_weights=True),
+        EarlyStopping(monitor='val_mean_absolute_error', patience=25, verbose=True, min_delta=1, restore_best_weights=True),
     ]
     print(dataset['train'][0][0].shape)
     print(dataset['train'][0][1].shape)
     print(dataset['train'][1].shape)
 
-    history = model.fit(*dataset['train'], epochs=500, validation_data=(*val_dataset,), callbacks=callbacks)
+    history = model.fit(*dataset['train'], batch_size=256, epochs=500, validation_data=(*val_dataset,), callbacks=callbacks)
 
     fig, ax1 = plt.subplots()
     ax1.plot(history.history['mean_absolute_error'], label='mse')
@@ -216,7 +216,7 @@ def main():
     train_dataset = TrainingDataSet(dataset_configs[dataset]['training'], z_range, transform_data=False, add_noise=True)
     exp_dataset = TrainingDataSet(dataset_configs[dataset]['experimental'], z_range, transform_data=False, add_noise=False, split_data=False)
 
-    model = train_model(train_dataset.data, train_dataset.data['val'])
+    model = train_model(train_dataset.data)
     save_model(model)
 
     model = load_model()
