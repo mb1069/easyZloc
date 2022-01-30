@@ -25,9 +25,9 @@ def fit_plane(coords, subset=True, subset_idx=None):
     if not subset:
         return dists_to_plane, points, subset_idx
 
-    percentile_threshold = 50
-    cutoff = np.percentile(dists_to_plane, percentile_threshold)
-    points_idx = np.where(dists_to_plane < cutoff)[0]
+    # percentile_threshold = 50
+    # cutoff = np.percentile(dists_to_plane, percentile_threshold)
+    points_idx = np.where(dists_to_plane < 100)[0]
 
     points_subset = coords[points_idx]
     return fit_plane(points_subset, subset=False, subset_idx=points_idx)
