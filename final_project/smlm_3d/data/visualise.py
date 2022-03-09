@@ -5,8 +5,9 @@ from skimage import img_as_ubyte, io
 import glob
 from tifffile import imread
 from random import sample
-
+from scipy.spatial.distance import cdist
 from PIL import Image
+import seaborn as sns
 
 def gen_gif(psf, fname):
     psf = psf / psf.max()
@@ -16,6 +17,19 @@ def gen_gif(psf, fname):
     # duration is the number of milliseconds between frames; this is 40 frames per second
     imgs[0].save(fname, save_all=True, append_images=imgs[1:], duration=50, loop=0)
 
+
+def plot_w_dist(centre, coords, radius, z_shift=None):
+    xy_dist = cdist([centre[0:2]], coords[:, [0,1]]).squeeze()
+    z = coords[:, 2]
+
+    ax = sns.scatterplot(xy_dist, z, hue=z_shift)
+    
+    circle = plt.Circle((0, centre[2]), radius=radius, fill=False)
+    ax.add_artist(circle)
+
+    plt.xlabel('x (distance to centre X/Y) (nm)')
+    plt.ylabel('z (nm)')
+    plt.show()
 
 
 def scatter_yz(coords, title=None):
@@ -28,13 +42,15 @@ def scatter_yz(coords, title=None):
     plt.show()
 
 
-def scatter_3d(coords, title=None):
-    print(title, coords.shape)
+def scatter_3d(xyz_coords, title=None):
+    xyz_coords = xyz_coords.astype(float)
+
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
 
-    xs, ys, zs = coords[:, 0], coords[:, 1], coords[:, 2]
+    xs, ys, zs = xyz_coords[:, 0], xyz_coords[:, 1], xyz_coords[:, 2]
     ax.scatter(xs, ys, zs, c=zs)
+
     if title:
         ax.set_title(title)
 
@@ -45,6 +61,30 @@ def scatter_3d(coords, title=None):
     plt.show()
 
 
+def plot_with_sphere(coords, centre, radius):
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+
+    n_meridians = 20
+    n_circles_latitude = 100
+    u, v = np.mgrid[0:2 * np.pi:n_meridians * 1j, 0:np.pi:n_circles_latitude * 1j]
+    sphere_x = centre[0] + radius * np.cos(u) * np.sin(v)
+    sphere_y = centre[1] + radius * np.sin(u) * np.sin(v)
+    sphere_z = centre[2] + radius * np.cos(v)
+
+    ax.set_xlim(coords[:, 0].min() * 0.9, coords[:, 0].max() * 1.1)
+    ax.set_ylim(coords[:, 1].min() * 0.9, coords[:, 1].max() * 1.1)
+    ax.set_zlim(coords[:, 2].min() * 0.9, coords[:, 2].max() * 1.1)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    ax.plot_wireframe(sphere_x, sphere_y, sphere_z, color="r", alpha=0.5)
+
+    ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2], c=coords[:, 2])
+    ax.scatter(*centre)
+    plt.show()
+    
 def create_3d_sphere_animation(df, centre, radius):
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -80,6 +120,25 @@ def create_3d_sphere_animation(df, centre, radius):
     # Save
     anim.save(fname, writer='imagemagick', fps=30)
 
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+def grid_psfs(psfs):
+    cols = 10
+    rows = (len(psfs) // cols) + (1 if len(psfs) % cols != 0 else 0)
+    n_spaces = int(cols * rows)
+    print(f'Rows {rows} Cols {cols} n_spaces {n_spaces} n_psfs {len(psfs)}')
+    if n_spaces > len(psfs):
+        black_placeholder = np.zeros((n_spaces-len(psfs), *psfs[0].shape))
+        psfs = np.concatenate((psfs, black_placeholder))
+        cols = len(psfs) // rows
+    psfs = list(chunks(psfs, cols))
+    psfs = [np.concatenate(p, axis=-1) for p in psfs]
+    psfs = np.concatenate(psfs, axis=0)
+    return psfs
 
 def view_modelled_psfs():
     from pyotf.utils import prep_data_for_PR
@@ -93,8 +152,7 @@ def view_modelled_psfs():
     psfs = np.concatenate(psfs, axis=2)
     show_psf_axial(psfs)
 
-def concat_psf_axial(psf, subsample_n):
-    perc_disp = 0.6
+def concat_psf_axial(psf, subsample_n, perc_disp=0.6):
     margin = (1 - perc_disp) / 2
     start = round(psf.shape[0] * margin) + 1
     end = round(psf.shape[0] * (1 - margin))
@@ -106,7 +164,7 @@ def concat_psf_axial(psf, subsample_n):
 def show_psf_axial(psf, title=None, subsample_n=7):
     plt.axis('off')
     psf = np.copy(psf)
-    sub_psf = concat_psf_axial(psf, subsample_n)
+    sub_psf = concat_psf_axial(psf, subsample_n).T
 
     if title:
         plt.title(title)
