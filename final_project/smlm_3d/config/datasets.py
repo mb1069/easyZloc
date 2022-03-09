@@ -87,7 +87,7 @@ dataset_configs = {
         'experimental':{
             'bpath': bpath/ 'bead_3D_STORM_three_instruments' / '20210723_beads_1mm' / '1mm_bead_surface_center_1',
             'img': '1mm_bead_surface_center_1_MMStack_Pos0_substack.ome.tif',
-            'csv': '1mm_bead_surface_center_1_MMStack_Pos0_substack.csv',
+            'csv': '1mm_bead_surface_center_1_MMStack_Pos0_substack_filtered.csv',
             'wl': 635,
             'na': 'unknown',
             'voxel_sizes': (2000, 106, 106),

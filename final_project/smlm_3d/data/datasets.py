@@ -556,7 +556,7 @@ class ExperimentalDataSet(GenericDataSet):
         # plt.show()
 
         output_coords = self.xyz_coords.copy()
-        output_coords[:, 2] += coord_diff
+        output_coords[:, 2] -= coord_diff
 
         # for x, y_orig, y_new in zip(output_coords[:, 0], output_coords[:, 2], output_coords[:, 2]+coord_diff):
         #     plt.plot([x, x], [y_orig, y_new])
