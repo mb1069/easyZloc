@@ -9,6 +9,9 @@ from scipy.spatial.distance import cdist
 from PIL import Image
 import seaborn as sns
 
+
+
+
 def gen_gif(psf, fname):
     psf = psf / psf.max()
     psf *= 255
@@ -21,9 +24,8 @@ def gen_gif(psf, fname):
 def plot_w_dist(centre, coords, radius, z_shift=None):
     xy_dist = cdist([centre[0:2]], coords[:, [0,1]]).squeeze()
     z = coords[:, 2]
+    ax = sns.scatterplot(xy_dist, z, hue=z_shift, palette=sns.color_palette("vlag", as_cmap=True))
 
-    ax = sns.scatterplot(xy_dist, z, hue=z_shift)
-    
     circle = plt.Circle((0, centre[2]), radius=radius, fill=False)
     ax.add_artist(circle)
 
@@ -81,10 +83,33 @@ def plot_with_sphere(coords, centre, radius):
 
     ax.plot_wireframe(sphere_x, sphere_y, sphere_z, color="r", alpha=0.5)
 
-    ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2], c=coords[:, 2])
+    ax.scatter(coords[:, 0], coords[:, 1], coords[:, 2], c=coords[:, 2], cmap=sns.color_palette("vlag", as_cmap=True))
     ax.scatter(*centre)
     plt.show()
-    
+
+def create_rotating_3d_plot(df):
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+
+    ax.set_xlim(df['x'].min() * 0.9, df['x'].max() * 1.1)
+    ax.set_ylim(df['y'].min() * 0.9, df['y'].max() * 1.1)
+    ax.set_zlim(df['z'].min() * 0.9, df['z'].max() * 1.1)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+
+    def init():
+        ax.scatter(df['x'], df['y'], df['z'], c=df['z'])
+        return fig,
+
+    def animate(i):
+        ax.view_init(elev=15., azim=i)
+        return fig,
+    # Animate
+    anim = animation.FuncAnimation(fig, animate, init_func=init, frames=360, interval=5, blit=True) 
+    plt.show()
+    return anim
+
 def create_3d_sphere_animation(df, centre, radius):
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -118,7 +143,8 @@ def create_3d_sphere_animation(df, centre, radius):
     anim = animation.FuncAnimation(fig, animate, init_func=init,
                                    frames=360, interval=20, blit=True)
     # Save
-    anim.save(fname, writer='imagemagick', fps=30)
+    # anim.save(fname, writer='imagemagick', fps=30)
+    print(anim)
 
 def chunks(lst, n):
     """Yield successive n-sized chunks from lst."""

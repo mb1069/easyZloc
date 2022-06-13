@@ -11,15 +11,15 @@ from skspatial.plotting import plot_3d
 def fit_plane(coords, subset=True, subset_idx=None):
     points = Points(coords)
     plane = Plane.best_fit(points)
-    # plot_3d(
-    #     points.plotter(c='k', s=75, alpha=0.2, depthshade=False),
-    #     plane.plotter(alpha=0.8, lims_x=(-50000, 50000), lims_y=(-50000, 50000)),
-    # )
-    # plt.xlabel('x (nm)')
-    # plt.ylabel('y (nm)')
-    # plt.show()
+    plot_3d(
+        points.plotter(c='k', s=75, alpha=0.2, depthshade=False),
+        plane.plotter(alpha=0.8, lims_x=(-50000, 50000), lims_y=(-50000, 50000)),
+    )
+    plt.xlabel('x (nm)')
+    plt.ylabel('y (nm)')
+    plt.show()
 
-    dists_to_plane = np.array([abs(plane.distance_point_signed(p)) for p in points])
+    dists_to_plane = np.array([plane.distance_point_signed(p) for p in points])
     print(f'{np.mean(dists_to_plane):.03} {np.std(dists_to_plane):.03}')
 
     if not subset:
@@ -27,7 +27,7 @@ def fit_plane(coords, subset=True, subset_idx=None):
 
     # percentile_threshold = 50
     # cutoff = np.percentile(dists_to_plane, percentile_threshold)
-    points_idx = np.where(dists_to_plane < 100)[0]
+    points_idx = np.where(abs(dists_to_plane) < 100)[0]
 
     points_subset = coords[points_idx]
     return fit_plane(points_subset, subset=False, subset_idx=points_idx)

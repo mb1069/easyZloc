@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tifffile import imsave
 
-from final_project.smlm_3d.data.datasets import TrainingDataSet, ExperimentalDataSet, SphereTrainingDataset
+from final_project.smlm_3d.data.datasets import TrainingDataSet, ExperimentalDataSet
 from final_project.smlm_3d.util import get_base_data_path, chunks
 from final_project.smlm_3d.config.datafiles import res_file
 from final_project.smlm_3d.config.datasets import dataset_configs
@@ -37,8 +37,9 @@ def main():
 
     dataset = 'matched_index_sphere'
     cfg = dataset_configs[dataset]['sphere_ground_truth_647nm']
-    exp_dataset = SphereTrainingDataset(cfg, transform_data=False, z_range=100000, split_data=True, add_noise=False, radius=5e5+50, lazy=True)
-    psfs, coords = exp_dataset.fetch_emitters_modelled_z()
+    dataset = TrainingDataSet(cfg, fit_plane_z=True, transform_data=False, split_data=False, lazy=True, z_range=1000)
+    # dataset = SphereTrainingDataset(cfg, transform_data=False, z_range=100000, split_data=True, add_noise=False, radius=5e5+50, lazy=True)
+    psfs, coords = dataset.fetch_emitters_modelled_z()
 
     
     psfs = np.array(psfs)
@@ -50,8 +51,8 @@ def main():
 
     psfs = grid_psfs(psfs)
     impath = os.path.join(cfg['bpath'], cfg['img'].replace('.ome.tif', '_concat.ome.tif'))
-    plt.imshow(psfs[psfs.shape[0]//2])
-    plt.show()
+    # plt.imshow(psfs[psfs.shape[0]//2])
+    # plt.show()
     imsave(impath, psfs, compress=6)
     print(impath)
 

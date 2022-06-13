@@ -2,7 +2,7 @@ import math
 from operator import sub
 import os
 from pickle import FALSE
-from cv2 import norm
+from cv2 import mean, norm
 from scipy.sparse import data
 
 from scipy.spatial.distance import cdist
@@ -24,6 +24,12 @@ from final_project.smlm_3d.experiments.noise.noise_psf import generate_noisy_psf
 
 from final_project.smlm_3d.experiments.noise.low_pass_filter import apply_low_pass_img_stack
 
+from final_project.smlm_3d.data.visualise import grid_psfs
+
+# from final_project.smlm_3d.data.tiff_image_handler import TiffImage
+from tifffile import TiffFile
+from collections import Counter
+
 DEBUG = False
 
 if DEBUG:
@@ -31,18 +37,23 @@ if DEBUG:
 
 from skimage.filters import butterworth
 
-def remove_bg(img):
+def cart2pol(xy_coords):
+    x, y = xy_coords
+    rho = np.sqrt(x**2 + y**2)
+    phi = np.arctan2(y, x)
+    return(rho, phi)
+
+def remove_bg(img, mult=1.2):
     img = img / img.max()
     bg_level = np.percentile(img.ravel(), 5)
-    mult = 1.2
     img = img - (bg_level * mult)
     img[img<0] = 0
     img = norm_zero_one(img)
     return img
 
 def butter_psf(psf):
-    psf = remove_bg(psf)
-    return np.stack([butterworth(img, 0.1, False) for img in psf])
+    # psf = remove_bg(psf)
+    return np.stack([butterworth(img, 0.2, high_pass=False) for img in psf])
 
 class GenericDataSet:
     filter_emitters_edges = True
@@ -54,7 +65,7 @@ class GenericDataSet:
         self.normalize_psf = normalize_psf
         self.impath = os.path.join(config['bpath'], config['img'])
         print('Reading img...')
-        self.img = imread(self.impath)
+        self.img = TiffFile(self.impath).asarray(out='memmap')
         self.transform_data = transform_data
 
         csv_path = os.path.join(config['bpath'], config['csv'])
@@ -91,15 +102,21 @@ class GenericDataSet:
         y_pixel = (df['y [nm]'] / voxel_size[-2])
         return x_pixel, y_pixel
     
-    @staticmethod
-    def normalise_image(psf):
-        if len(psf.shape) == 3:
-            min_z = psf.min(axis=(1, 2))[:, np.newaxis, np.newaxis]
-            max_z = psf.max(axis=(1, 2))[:, np.newaxis, np.newaxis]
-            psf = (psf - min_z) / (max_z - min_z)
+    def normalise_image(self, psf):
+        # if len(psf.shape) == 3:
+        #     min_z = psf.min(axis=(1, 2))[:, np.newaxis, np.newaxis]
+        #     max_z = psf.max(axis=(1, 2))[:, np.newaxis, np.newaxis]
+        #     psf = (psf - min_z) / (max_z - min_z)
+        # else:
+        #     psf = (psf - psf.min()) / (psf.max() - psf.min())
+        # return psf
+        if psf.ndim == 3:
+            psf = np.stack([self.normalise_image(p) for p in psf])
         else:
+            # psf = (psf - np.mean(psf)) / np.std(psf)
             psf = (psf - psf.min()) / (psf.max() - psf.min())
         return psf
+
 
     def cut_image_stack(self, image, center, width=16, show=False):
         """
@@ -186,6 +203,7 @@ class GenericDataSet:
             try:
                 z_pos = estimate_offset(psf, self.voxel_sizes, self.disable_emitter_peak_boundary)[0]
                 if self.normalize_psf:
+
                     psf = self.normalise_image(psf)
 
                 xy_coord = filtered_df.iloc[i][['x [nm]', 'y [nm]']].to_numpy()
@@ -222,7 +240,6 @@ class GenericDataSet:
             for a, b in (("x0 (um)", "x [nm]"), ("y0 (um)", "y [nm]"), ("z0 (um)", "z [nm]")):
                 df.loc[:, b] = df.loc[:, a] * 1000
                 del df[a]
-
         df = self.remap_emitter_coords(img, df)
         df = self.filter_localisations(df, img.shape, self.bound, self.voxel_sizes,
                                        edges=self.filter_emitters_edges, proximity=self.filter_emitters_proximity)
@@ -240,15 +257,19 @@ class GenericDataSet:
     def debug_emitter(self, i, z_range, disable_boundary_check=False, normalize=False):
         psf = self.cut_image_stack(self.img, self.pixel_coords[i], width=self.bound)
 
-        coords = self.filtered_df[['x [nm]', 'y [nm]']].iloc[i].to_numpy()
-
-        offset = get_peak_sharpness(psf, 0.4) * self.voxel_sizes[0]
+        xy_coords = self.filtered_df[['x [nm]', 'y [nm]']].iloc[i].to_numpy()
+        polar_coords = self.convert_xy_coords_to_polar(xy_coords)
+        try:
+            offset = get_peak_sharpness(psf, 0.4) * self.voxel_sizes[0]
+        except EnvironmentError as e:
+            print(e)
+            offset = 0
         z = np.linspace(0, psf.shape[0]-1, num=psf.shape[0]) * self.voxel_sizes[0] - offset
         if normalize:
             psf = self.normalise_image(psf)
         if self.transform_data:
             input_data = self.transform_input(psf)
-            dwt = np.hstack((input_data, np.tile(coords, (input_data.shape[0], 1))))
+            dwt = np.hstack((input_data, np.tile(xy_coords, (input_data.shape[0], 1))))
         else:
             dwt = None
 
@@ -258,19 +279,9 @@ class GenericDataSet:
             dwt = input_data[idx]
         z = z[idx]
 
-        return psf, dwt, coords, z, self.filtered_df.iloc[i]
+        return psf, polar_coords, xy_coords, z, self.filtered_df.iloc[i]
 
-    def convert_xy_coords_to_polar(self, xy_coords):
-        def cart2pol(xy_coords):
-            x, y = xy_coords
-            rho = np.sqrt(x**2 + y**2)
-            phi = np.arctan2(y, x)
-            return(rho, phi)
-        img_center = [[self.img.shape[i]*self.config['voxel_sizes'][i] / 2 for i in [1,2]]]
-
-        re_mapped_coords = xy_coords - img_center
-        polar_coords = np.apply_along_axis(cart2pol, 1, re_mapped_coords)
-        # norm angles to [0, 1]
+    def norm_polar_coords(self, polar_coords):
         polar_coords[:, 1] = (polar_coords[:, 1] + np.pi) / (2*np.pi)
 
         # norm distances to [0, 1]
@@ -278,6 +289,15 @@ class GenericDataSet:
         max_distance = np.hypot(*img_dims) / 2
 
         polar_coords[:, 0] = polar_coords[:, 0] / max_distance
+        return polar_coords
+
+    def convert_xy_coords_to_polar(self, xy_coords):
+        img_center = [[self.img.shape[i]*self.config['voxel_sizes'][i] / 2 for i in [1,2]]]
+
+        re_mapped_coords = xy_coords - img_center
+        polar_coords = np.apply_along_axis(cart2pol, 1, re_mapped_coords)
+        # norm angles to [0, 1]
+        polar_coords = self.norm_polar_coords(polar_coords)
 
         return polar_coords
 
@@ -300,24 +320,30 @@ class TrainingDataSet(GenericDataSet):
         from skspatial.objects import Points
         from skspatial.plotting import plot_3d
         plt.rcParams['figure.figsize'] = [30, 10] 
-        points = Points(coords)
-        plane = Plane.best_fit(points)
-        plot_3d(
-            points.plotter(c='k', s=75, alpha=0.2, depthshade=False),
-            plane.plotter(alpha=0.8, lims_x=(-50000, 50000), lims_y=(-50000, 50000)),
-        )
-        plt.xlabel('x (nm)')
-        plt.ylabel('y (nm)')
-        plt.show()
-        dists = np.array([plane.distance_point_signed(p) for p in points])
-        sns.scatterplot(coords[:, 0], coords[:, 2], hue=abs(dists))
-        plt.show()
-
-        sns.scatterplot(coords[:, 1], coords[:, 2], hue=abs(dists))
-        plt.show()
         
-        plt.hist(dists, bins=20)
-        plt.show()
+        fittable_coords = coords[coords[:, 2] > 0]
+
+        points = Points(fittable_coords)
+        plane = Plane.best_fit(points)
+
+        all_points = Points(coords)        
+        dists = np.array([plane.distance_point_signed(p) for p in all_points])
+        if DEBUG:
+            plot_3d(
+                points.plotter(c='k', s=75, alpha=0.2, depthshade=False),
+                plane.plotter(alpha=0.8, lims_x=(-50000, 50000), lims_y=(-50000, 50000)),
+            )
+            plt.xlabel('x (nm)')
+            plt.ylabel('y (nm)')
+            plt.show()
+            sns.scatterplot(coords[:, 0], coords[:, 2], hue=abs(dists))
+            plt.show()
+
+            sns.scatterplot(coords[:, 1], coords[:, 2], hue=abs(dists))
+            plt.show()
+            
+            plt.hist(dists, bins=20)
+            plt.show()
         return dists
 
     def fetch_emitters_modelled_z(self):
@@ -327,10 +353,16 @@ class TrainingDataSet(GenericDataSet):
 
         psfs = []
         z_coords_frame = []
+    
         for i in range(len(self.csv_data)):
             psf = self.cut_image_stack(self.img, pixel_coords[i], width=self.bound)
-            z_coords_frame.append(get_peak_sharpness(psf, 0.4))
-            psf = self.normalise_image(psf)
+            try:
+                z_coords_frame.append(get_peak_sharpness(psf, 0.4))
+            except EnvironmentError:
+                print('Failed to fit image gradient.')
+                z_coords_frame.append(-1)
+            if self.normalize_psf:
+                psf = self.normalise_image(psf)
             psfs.append(psf)
 
 
@@ -428,14 +460,20 @@ class TrainingDataSet(GenericDataSet):
             print('Adding noise')
             psfs = []
             coords = []
+            n_psfs = len(self.data['train'][0])
+            target_min_psfs = 1e5
+            n_repeats = min(10, int(target_min_psfs//n_psfs)+1) if isinstance(self.add_noise, bool) else self.add_noise
+            print(f'N repeats {n_repeats}')
             for psf, coord in zip(*self.data['train']):
                 psfs.append(psf)
                 coords.append(coord)
-                for _ in range(10):
+                
+                for _ in range(n_repeats):
                     noisy_psf = generate_noisy_psf(psf)
                     psfs.append(self.normalise_image(noisy_psf))
                     coords.append(coord)
             psfs = np.stack(psfs)
+            print(psfs.shape)
             coords = np.stack(coords)
             self.data['train'] = [psfs, coords]
 
@@ -469,10 +507,10 @@ class ExperimentalDataSet(GenericDataSet):
         self.filter_emitters_proximity = filter_localisations
         self.normalize_psf = normalize_psf
     
-        if 'z_step' not in config:
-            self.z_step = config['voxel_sizes'][0]
-        else:
-            self.z_step = 0
+        # if 'z_step' not in config:
+        #     self.z_step = config['voxel_sizes'][0]
+        # else:
+        #     self.z_step = 0
 
         if len(self.img.shape) == 2:
             self.img = self.img[np.newaxis]
@@ -482,13 +520,14 @@ class ExperimentalDataSet(GenericDataSet):
 
     def prepare_data(self):
         psfs, xyz_coords = self.fetch_all_emitters()
-        from final_project.smlm_3d.data.visualise import grid_psfs
+        # from final_project.smlm_3d.data.visualise import grid_psfs
         # plt.imshow(grid_psfs(psfs))
         # plt.show()
         # psfs = np.stack([remove_bg(p) for p in psfs])
         # plt.imshow(grid_psfs(psfs))
         # plt.show()
         if DEBUG:
+            print('debug')
             scatter_3d(xyz_coords)
         psfs = psfs.astype(np.float32)
         # print(psfs.shape)
@@ -536,8 +575,8 @@ class ExperimentalDataSet(GenericDataSet):
             # plt.show()         
             psf = self.cut_image_stack(frame, pixel_coord, width=self.bound)
             if self.normalize_psf:
+                # psf = remove_bg(psf)
                 psf = self.normalise_image(psf)
-                psf = remove_bg(psf)
             xy_coord = filtered_df.iloc[i][['x [nm]', 'y [nm]']].to_numpy()
             all_psfs.append(psf)
             all_xyz_coords.append(list(xy_coord) + [frame_idx * self.voxel_sizes[0]])
@@ -549,12 +588,12 @@ class ExperimentalDataSet(GenericDataSet):
 
     def predict_dataset(self, model):
         coord_diff = model.predict(self.data).squeeze()
-
         # plt.hist(coord_diff)
         # plt.show()
         # plt.plot(coord_diff)
         # plt.show()
-
+        # plt.hist(coord_diff)
+        # plt.show()
         output_coords = self.xyz_coords.copy()
         output_coords[:, 2] -= coord_diff
 
@@ -581,6 +620,31 @@ class ExperimentalDataSet(GenericDataSet):
 
         return output_coords
 
+        
+class MultiTrainingDataset:
+    def __init__(self, configs, *args, **kwargs):
+        datasets = []
+        for cfgs in configs:
+            dataset = TrainingDataSet(cfgs, *args, **kwargs)
+            datasets.append(dataset)
+        self.datasets = datasets
+        self.validate()
+    
+    def validate(self):
+        for ds in self.datasets[1:]:
+            assert ds.voxel_sizes == self.datasets[0].voxel_sizes
+            
+    def merge(self):
+        main_ds = self.datasets[0]
+        for ds in self.datasets[1:]:
+            for k, v in ds.data.items():
+                main_ds.data[k][0][0] = np.concatenate((main_ds.data[k][0][0], v[0][0]), axis=0)
+                main_ds.data[k][0][1] = np.concatenate((main_ds.data[k][0][1], v[0][1]), axis=0)
+                main_ds.data[k][1] = np.concatenate((main_ds.data[k][1], v[1]), axis=0)
+        return main_ds
+
+
+
 def create_circular_mask(h, w, center=None, radius=None):
 
     if center is None: # use the middle of the image
@@ -594,18 +658,219 @@ def create_circular_mask(h, w, center=None, radius=None):
     mask = dist_from_center <= radius
     return mask
 
+from sklearn.cluster import DBSCAN
 
 class StormDataset(ExperimentalDataSet):
-    def __init__(self, config, lazy=False, transform_data=False, normalize_psf=True):
-        super().__init__(config, filter_localisations=False, lazy=True, transform_data=transform_data, normalize_psf=normalize_psf)
+    neighbour_radius = 2.5
+    max_off_frames = 10
+    def __init__(self, config, lazy=False, transform_data=False, normalize_psf=False):
+        super().__init__(config, filter_localisations=False, lazy=True, transform_data=transform_data, normalize_psf=False)
         self.filter_emitters_proximity=False
         self.filter_emitters_edges=True
-        print(self.img.shape)
+        self.normalize_psf = normalize_psf
         if not lazy:
             self.prepare_data()
+
+    def prepare_data(self):
+        super().prepare_data()
+        self.cluster_emitters()
+
+
+    
+    def cluster_emitters(self):
+        print('Clustering emitters...')
+        print(f'Initial: N images {self.data[0].shape[0]} - DF: {self.csv_data.shape}')
+
+        all_xy = self.csv_data[['x [nm]', 'y [nm]']].to_numpy()
+        cluster = DBSCAN(eps=self.neighbour_radius, min_samples=2).fit(all_xy)
+        self.csv_data['group'] = cluster.labels_
+        self.csv_data['id'] = np.arange(0, self.csv_data.shape[0])
+        # TODO use max_off_frames
+        
+        min_frames = 5
+        group_counts = Counter(self.csv_data['group'])
+        valid_groups = [k for k, v in group_counts.items() if v > min_frames]
+        n_groups = len(valid_groups)
+
+        new_df = []
+        new_imgs = np.zeros((n_groups, self.bound*2, self.bound*2, 1))
+        new_coords = np.zeros((n_groups, 2))
+        xyz_coords = np.zeros((n_groups, 3))
+
         mask = create_circular_mask(self.bound*2, self.bound*2, radius=8)
-        for i in range(self.data[0].shape[0]):
-            self.data[0][i][~mask] = 0
+
+        i = 0
+        for group_id in valid_groups:
+            sub_df = self.csv_data[self.csv_data['group'] == group_id]
+
+            idx = sub_df['id'].to_numpy()
+            imgs = self.data[0][idx].squeeze()
+
+            mean_img = np.mean(imgs, axis=0)
+            if self.normalize_psf:
+                mean_img = self.normalise_image(mean_img)
+            mean_img = np.expand_dims(mean_img, -1)
+            new_imgs[i] = mean_img
+
+            coords = self.data[1][idx].squeeze()
+            mean_coords = np.mean(coords, axis=0)
+            new_coords[i] = mean_coords
+
+            mean_row = sub_df.mean(axis=0)
+            mean_row['frame'] = min(list(sub_df['frame']))
+            mean_row['n_detections'] = sub_df.shape[0]
+            # mean_row['frame'] = sorted(list(sub_df['frame']))
+            mean_row['id'] = i
+            new_df.append(mean_row)
+
+            xyz = [mean_row.get(c) or 0 for c in ['x [nm]', 'y [nm]', 'z [nm]']]
+            xyz_coords[i] = xyz
+
+
+            frames = sorted(sub_df['frame'])
+            frame_gaps = [frames[i+1]-frames[i] for i in range(len(frames)-1)]
+            if DEBUG and max(frame_gaps) > 100:
+                plt.imshow(grid_psfs(imgs))
+                plt.show()
+                plt.imshow(mean_img)
+                plt.show()
+
+            i+=1
+
+        
+        # TODO include singly-localised emitters
+        
+        self.csv_data = pd.DataFrame.from_records(new_df)
+        self.data = (new_imgs, new_coords)
+        self.xyz_coords = xyz_coords
+
+        print(f'Final: images {self.data[0].shape[0]} - DF: {self.csv_data.shape}')
+
+
+
+
+
+
+
+    def fetch_all_emitters(self):
+        all_psfs = []
+        all_xyz_coords = []
+
+        pixel_coords, filtered_df = self.fetch_emitters_coords(self.img, self.csv_data)
+        self.kept_idx = list(filtered_df.index)
+        # for frame in set(filtered_df['frame']):
+        #     print(frame)
+        #     plt.imshow(self.img[frame-1])
+        #     plt.show()
+        #     df = filtered_df[filtered_df['frame'] == frame]
+        #     df.plot.scatter('x [nm]', 'y [nm]')
+            # plt.show()
+
+        for i, pixel_coord in enumerate(tqdm(pixel_coords)):
+            frame_idx = int((filtered_df.iloc[i]['frame']) - 1)
+            frame = self.img[frame_idx]
+            # fig, ax = plt.subplots()
+            # ax.imshow(frame)
+            # import matplotlib.patches as patches
+            # rect = patches.Rectangle([p-16 for p in pixel_coord], 32, 32, linewidth=1, edgecolor='r', facecolor='none')
+            # ax.add_patch(rect)   
+            # plt.show()         
+            psf = self.cut_image_stack(frame, pixel_coord, width=self.bound)
+            if self.normalize_psf:
+                psf = self.normalise_image(psf)
+                psf = remove_bg(psf)
+            xy_coord = filtered_df.iloc[i][['x [nm]', 'y [nm]']].to_numpy()
+            all_psfs.append(psf)
+            all_xyz_coords.append(list(xy_coord) + [frame_idx * self.voxel_sizes[0]])
+        all_xyz_coords = np.array(all_xyz_coords)
+        all_psfs = np.stack(all_psfs)
+
+        return all_psfs, all_xyz_coords
+
+class MultiImageStormDataset(StormDataset):
+    def __init__(self, config, lazy=False, transform_data=False, normalize_psf=True):
+        super().__init__(config, lazy=True, transform_data=transform_data, normalize_psf=normalize_psf)
+        self.filter_emitters_proximity=False
+        self.filter_emitters_edges=True
+        self.frames_per_z_step=config['frames_per_z_step']
+        if not lazy:
+            self.prepare_data()
+
+    # def prepare_data(self):
+    #     psfs, xyz_coords = self.fetch_all_emitters()
+    #     from final_project.smlm_3d.data.visualise import grid_psfs
+    #     # plt.imshow(grid_psfs(psfs))
+    #     # plt.show()
+    #     # psfs = np.stack([remove_bg(p) for p in psfs])
+    #     # plt.imshow(grid_psfs(psfs))
+    #     # plt.show()
+    #     if DEBUG:
+    #         scatter_3d(xyz_coords)
+    #     psfs = psfs.astype(np.float32)
+    #     # print(psfs.shape)
+    #     # imwrite('/home/miguel/Projects/uni/phd/smlm_z/final_project/smlm_3d/tmp/out.tif', psfs, compress=6)
+    #     # quit()
+
+    #     if self.transform_data:
+    #         input_data = self.transform_input(psfs)
+    #         input_data = np.hstack((input_data, xyz_coords[:, (0, 1)]))
+    #     else:
+    #         input_data = psfs[:, :, :, np.newaxis]
+
+    #     xy_coords = xyz_coords[:, (0, 1)]
+
+    #     self.xyz_coords = xyz_coords
+    #     polar_coords = self.convert_xy_coords_to_polar(xy_coords)
+
+
+        # self.data = [input_data, polar_coords]
+        # mask = create_circular_mask(self.bound*2, self.bound*2, radius=8)
+        # for i in range(self.data[0].shape[0]):
+        #     self.data[0][i][~mask] = 0
+
+    def fetch_all_emitters(self):
+        all_psfs = []
+        all_xyz_coords = []
+
+        pixel_coords, filtered_df = self.fetch_emitters_coords(self.img, self.csv_data)
+        self.kept_idx = list(filtered_df.index)
+        # for frame in set(filtered_df['frame']):
+        #     print(frame)
+        #     plt.imshow(self.img[frame-1])
+        #     plt.show()
+        #     df = filtered_df[filtered_df['frame'] == frame]
+        #     df.plot.scatter('x [nm]', 'y [nm]')
+            # plt.show()
+
+        from skimage.morphology.footprints import disk
+
+        from skimage.filters._gaussian import gaussian
+
+        mask = create_circular_mask(32, 32, radius=8)
+        for i, pixel_coord in enumerate(tqdm(pixel_coords)):
+            frame_idx = int((filtered_df.iloc[i]['frame']) - 1)
+            frame = self.img[frame_idx]
+            psf = self.cut_image_stack(frame, pixel_coord, width=self.bound)
+            if self.normalize_psf:
+                # psf = butter_psf(psf)
+                # psf = norm_zero_one(psf)
+                psf = remove_bg(psf, mult=1.01)
+                # psf[~mask] = 0
+                psf = self.normalise_image(psf)
+                # psf = gaussian(psf, sigma=1)
+                # psf = self.normalise_image(psf)
+                # psf = norm_zero_one(psf)
+                
+
+                # psf = self.normalise_image(psf)
+                
+            xy_coord = filtered_df.iloc[i][['x [nm]', 'y [nm]']].to_numpy()
+            all_psfs.append(psf)
+            all_xyz_coords.append(list(xy_coord) + [(frame_idx//self.frames_per_z_step) * self.voxel_sizes[0]])
+        all_xyz_coords = np.array(all_xyz_coords)
+        all_psfs = np.stack(all_psfs)
+
+        return all_psfs, all_xyz_coords
 
 # class SphereTrainingDataset(TrainingDataSet):
 #     filter_emitters_proximity = True

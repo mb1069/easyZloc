@@ -11,7 +11,7 @@ from final_project.smlm_3d.data.datasets import TrainingDataSet
 from final_project.smlm_3d.util import get_base_data_path
 from final_project.smlm_3d.config.datafiles import res_file
 from final_project.smlm_3d.config.datasets import dataset_configs
-from final_project.smlm_3d.data.visualise import concat_psf_axial
+from final_project.smlm_3d.data.visualise import concat_psf_axial, grid_psfs
 from tqdm import trange
 from skimage.metrics import structural_similarity as ssim
 
@@ -29,7 +29,7 @@ def main():
     # Run on exp data
     z_range = 10000
 
-    cfg = dataset_configs['openframe']['sphere']
+    cfg = dataset_configs['20220607_nanoruler_miguel']['training_20nm']
 
     SMART_SELECTION = False
 
@@ -50,16 +50,18 @@ def main():
     reject_ssim_threshold = 0.85
     for i in trange(train_dataset.total_emitters):
         try:
-            psf, dwt, coords, z, record = train_dataset.debug_emitter(i, 100000, True)
+            psf, dwt, coords, z, record = train_dataset.debug_emitter(i, 2000, True)
         except RuntimeError:
             continue
-        sub_psf = concat_psf_axial(psf, 20, perc_disp=1)
-        if len(accepted_images) > 2:
-            example_psf = np.stack(accepted_images).mean(axis=(0))
-            val = round(ssim(example_psf, psf), 5)
-            plt.title(str(val))
-        else:
-            val = 0
+        sub_psf = grid_psfs(psf.squeeze())
+        # sub_psf = concat_psf_axial(psf, 5, perc_disp=100)
+        if use_ssim_val:
+            if len(accepted_images) > 2:
+                example_psf = np.stack(accepted_images).mean(axis=(0))
+                val = round(ssim(example_psf, psf), 5)
+                plt.title(str(val)) 
+            else:
+                val = 0
         
         if use_ssim_val and val <= reject_ssim_threshold:
             accept_image = False
@@ -79,7 +81,6 @@ def main():
         
         if SMART_SELECTION and len(accepted_images) == 10:
             use_ssim_val = True
-        plt.close()
 
 
     pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
