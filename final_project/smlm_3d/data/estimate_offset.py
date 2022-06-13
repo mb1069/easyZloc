@@ -94,11 +94,32 @@ def get_img_gradient(img):
 
 def fit_cubic_spline(y, x, sub_x, s=0.05):
     cs = UnivariateSpline(x, y, k=3, s=s)
+
+    # TODO potentially use this to exclude beads?
+    # evaluate sum of squared second derivative as a measurement of curve smoothness
+    smoothness = sum(np.power(cs(sub_x, 2), 2))
+    if smoothness > 1:
+        raise EnvironmentError('Failed to fit bead accurately.')
+
     return norm_zero_one(cs(sub_x))
 
 def get_sharpness(psf):
     return norm_zero_one(np.array([get_img_gradient(img) for img in psf]))
-    
+
+def create_circular_mask(h, w, center=None, radius=None):
+
+    if center is None: # use the middle of the image
+        center = (int(w/2), int(h/2))
+    if radius is None: # use the smallest distance between the center and image walls
+        radius = min(center[0], center[1], w-center[0], h-center[1])
+
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y-center[1])**2).astype(int)
+
+    mask = dist_from_center <= radius
+    return mask
+
+
 def get_peak_sharpness(_psf, s=0.15):
     x = np.arange(0, _psf.shape[0])
     sub_x = np.linspace(0, _psf.shape[0], 1000, endpoint=True)
@@ -108,6 +129,8 @@ def get_peak_sharpness(_psf, s=0.15):
     sharpness = get_sharpness(psf)
 
     cubic_sharpness = fit_cubic_spline(sharpness, x, sub_x, s=s)
+
+
     sharpness_peak = sub_x[np.argmax(cubic_sharpness)]
 
     if DEBUG:
@@ -120,7 +143,7 @@ def get_peak_sharpness(_psf, s=0.15):
         ax0.legend()
         peak_frame = round(sharpness_peak)
         diff = 5
-        imgs = [_psf[i] for i in [peak_frame-diff, peak_frame, peak_frame+diff] if 0 < i and i < _psf.shape[0]]
+        imgs = [psf[i] for i in [peak_frame-diff*2, peak_frame-diff, peak_frame, peak_frame+diff, peak_frame+diff*2] if 0 < i and i < _psf.shape[0]]
         imgs = np.concatenate(imgs, axis=0)
         ax1.imshow(imgs)
         plt.title(str(round(sharpness_peak, 3)))
@@ -136,9 +159,9 @@ def get_peak_sharpness(_psf, s=0.15):
 
 
 
-def estimate_offset(psf, voxel_sizes=voxel_sizes, disable_boundary_check=False):
+def estimate_offset(_psf, voxel_sizes=voxel_sizes, disable_boundary_check=False):
+    psf = _psf.copy()
     target_psf_shape = psf.shape
-    _psf = psf.copy()
     # psf = psf.sum(axis=2)
     # if psf.dtype != 'uint16':
     #     psf /= psf.max()
@@ -162,7 +185,9 @@ def estimate_offset(psf, voxel_sizes=voxel_sizes, disable_boundary_check=False):
     sub_x = np.linspace(x.min(), x.max(), 100000, endpoint=True)
 
     cs = UnivariateSpline(x, axial_max, k=3, s=S)
+
     fit = cs(x)
+
     
     diff = fit.max() / fit.mean()
     

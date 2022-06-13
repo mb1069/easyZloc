@@ -23,34 +23,48 @@ def sphere_loss(p, radius, fit_data=None):
     x, y, z = fit_data.T
     return np.sqrt((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2) - radius
 
-def fit_sphere(df, radius):
+def fit_sphere(df, radius, with_bounds=True, top_or_bottom='bottom'):
     fit_data = df[['x', 'y', 'z']].to_numpy()
 
-    initial_guess = [df['x'].mean(), df['y'].mean(), df['z'].min() + radius]
+    if top_or_bottom == 'bottom':
+        invert_z = 1
+    else:
+        invert_z = -1
 
-    low_bounds = [
-        df['x'].min(),
-        df['y'].min(),
-        df['z'].min() + (radius * 0.75),
+    initial_guess = [df['x'].mean(), df['y'].mean(), df['z'].min() + (invert_z * radius)]
+
+    z_bounds = [
+        df['z'].min() + (invert_z * radius * 0.75),
+        df['z'].min() + (invert_z * radius * 1.25),
     ]
-    high_bounds = [
-        df['x'].max(),
-        df['y'].max(),
-        df['z'].min() + (radius * 1.25),
-    ]
-    print('low', low_bounds)
-    print('initial', initial_guess)
-    print('high', high_bounds)
+    if with_bounds:
+        low_bounds = [
+            df['x'].min() - radius,
+            df['y'].min() - radius,
+            min(z_bounds)
+        ]
+        high_bounds = [
+            df['x'].max() + radius,
+            df['y'].max() + radius,
+            max(z_bounds)
+        ]
+        bounds = (low_bounds, high_bounds)
+        print('low', low_bounds)
+        print('initial', initial_guess)
+        print('high', high_bounds)
+    else:
+        bounds = ([-np.inf]*3, [np.inf]*3)
+
     sphere_loss_fn = partial(sphere_loss, radius=radius, fit_data=fit_data)
-    res = least_squares(sphere_loss_fn, initial_guess, bounds=(low_bounds, high_bounds), verbose=True, ftol=1e-16,
-                        xtol=1e-16, max_nfev=100, loss='soft_l1')
+    res = least_squares(sphere_loss_fn, initial_guess, bounds=bounds, verbose=True, ftol=1e-16,
+                        xtol=1e-16, max_nfev=1000, loss='soft_l1')
     centre = res.x[0:3]
     x = ['x', 'y', 'z']
-    plt.plot(x, low_bounds, label='low')
-    plt.plot(x, high_bounds, label='high')
+    if with_bounds:
+        plt.plot(x, low_bounds, label='low')
+        plt.plot(x, high_bounds, label='high')
     plt.plot(x, initial_guess, ':', label='initial')
     plt.plot(x, centre, label='centre')
-    plt.yscale('log')
     plt.legend()
     plt.show()
     plot_with_sphere(df[x].to_numpy(), centre, radius)
