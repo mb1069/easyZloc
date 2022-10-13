@@ -31,7 +31,6 @@ jobs:
       - checkout
       - python/install-packages:
           pkg-manager: pip
-          app-dir: ~/final_version/  # If you're requirements.txt isn't in the root directory.
       - run:
           name: Run tests
           # This assumes pytest is installed via the install-package step above
