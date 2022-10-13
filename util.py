@@ -53,7 +53,8 @@ def get_base_data_path():
         while not os.path.exists(bpaths[-1]):
             bpaths.pop()
     except IndexError:
-        raise EnvironmentError('Base path to datafiles in incorrectly set')
+        print('BPath not found')
+        return ''
     return Path(bpaths[-1])
 
 
