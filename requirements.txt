@@ -11,7 +11,7 @@ scikit_image==0.19.1
 scikit_learn==1.1.2
 scipy==1.8.0
 seaborn==0.11.2
-skimage==0.0
+scikit-image
 tensorflow==2.10.0
 tensorflow_gpu==2.10.0
 tifffile==2021.4.8
