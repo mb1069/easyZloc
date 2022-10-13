@@ -1,4 +1,4 @@
-h5py==3.1.0
+h5py==3.7.0
 keras==2.10.0
 matplotlib==3.3.2
 numpy==1.21.3
