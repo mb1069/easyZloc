@@ -17,3 +17,4 @@ tensorflow_gpu==2.10.0
 tifffile==2021.4.8
 tqdm==4.50.2
 pytest
+numpy==1.23.4
