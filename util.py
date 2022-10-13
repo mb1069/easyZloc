@@ -54,7 +54,7 @@ def get_base_data_path():
             bpaths.pop()
     except IndexError:
         print('BPath not found')
-        return ''
+        return Path('.')
     return Path(bpaths[-1])
 
 
