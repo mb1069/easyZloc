@@ -29,12 +29,23 @@ jobs:
     # CircleCI will report the results back to your VCS provider.
     steps:
       - checkout
+      - run:
+          command: |
+              virtualenv .venv;
+              echo "source .venv/bin/activate" >> $BASH_ENV;
+      - restore_cache: # **restores saved dependency cache if the Branch key template or requirements.txt files have not changed since the previous run**
+          key: deps1-{{ .Branch }}-{{ checksum "requirements.txt" }}
       - python/install-packages:
           pkg-manager: pip
+      - save_cache:
+          key: deps1-{{ .Branch }}-{{ checksum "requirements.txt" }}
+          paths:
+              - ".venv"
+              - "~/.cache/pip"    # (pip cache dir)
       - run:
           name: Run tests
           # This assumes pytest is installed via the install-package step above
-          command: pytest
+          command: PYTHONPATH=$PWD & pytest
 
 # Invoke jobs via workflows
 # See: https://circleci.com/docs/2.0/configuration-reference/#workflows
