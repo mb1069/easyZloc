@@ -91,6 +91,21 @@ def load_ref_img_and_norm(imgs):
         imgs[i] = norm_one_one(match_histograms(imgs[i], mean_img))
     return imgs
 
+def frame_xy_to_polar(xy_coords, height, width):
+    img_dims = height, width
+    img_center = [n / 2 for n in img_dims]
+
+    re_mapped_coords = xy_coords - img_center
+    polar_coords = np.apply_along_axis(cart2pol, 1, re_mapped_coords)
+    # norm angles to [0, 1]
+    polar_coords[:, 1] = (polar_coords[:, 1]) / (2*np.pi)
+    # norm distances to [0, 1]
+    max_distance = np.hypot(*img_dims) / 2
+
+    polar_coords[:, 0] = polar_coords[:, 0] / max_distance
+    print('Converted coords...')
+    return polar_coords
+
 class PicassoDataset:
     def __init__(self, config):
         self.config = config
@@ -125,22 +140,14 @@ class PicassoDataset:
         assert self.csv_data.shape[0] == self.spots.shape[0]
 
         self.spots = self.spots[:, :, :, np.newaxis]
-        self.coords = self.convert_xy_coords_to_polar(self.csv_data[['x', 'y']].to_numpy())
+        self.coords = self.convert_xy_coords_to_polar(self.csv_data[['y', 'x']].to_numpy())
 
     def convert_xy_coords_to_polar(self, xy_coords):
-        img_dims = self.locs_info['Height'], self.locs_info['Width']
-        img_center = [n / 2 for n in img_dims]
+        height, width = self.locs_info['Height'], self.locs_info['Width']
 
-        re_mapped_coords = xy_coords - img_center
-        polar_coords = np.apply_along_axis(cart2pol, 1, re_mapped_coords)
-        # norm angles to [0, 1]
-        polar_coords[:, 1] = (polar_coords[:, 1] + np.pi) / (2*np.pi)
-
-        # norm distances to [0, 1]
-        max_distance = np.hypot(*img_dims) / 2
-
-        polar_coords[:, 0] = polar_coords[:, 0] / max_distance
-        print('Converted coords...')
+        polar_coords = frame_xy_to_polar(xy_coords, height, width)
+        assert polar_coords.min() >= 0
+        assert polar_coords.max() <= 1
         return polar_coords
 
 from skimage.feature import match_template
@@ -370,8 +377,7 @@ class TrainingPicassoDataset(PicassoDataset):
         # assert np.all(psfs.min(axis=(1,2))==0)
         # assert np.all(psfs.max(axis=(1,2))==1)
         print('Coords', coords.min(), coords.max())
-        assert coords.min() >= 0
-        assert coords.max() <= 1
+
 
         print('Prepared stacks...')
         return psfs, coords, zs       
