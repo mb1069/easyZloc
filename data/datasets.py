@@ -35,7 +35,7 @@ from tifffile import TiffFile
 from collections import Counter
 import yaml
 
-DEBUG = True
+DEBUG = False
 if DEBUG:
     print('Debug enabled in datasets.py')
 
@@ -362,9 +362,7 @@ class TrainingPicassoDataset(PicassoDataset):
 
             stack_depth = psf.shape[0]
             z = (stack_offset_to_z(offset, psf, 1)) * self.config['voxel_sizes'][0]
-            print(z.min(), z.max(), ref_0 * self.config['voxel_sizes'][0])
             z -= (2 * ref_0 * self.config['voxel_sizes'][0])
-            print(z.min(), z.max(), ref_0)
             for z_val in z:
                 entry = self.csv_data.iloc[i].to_dict()
                 entry['z [nm'] = z_val
