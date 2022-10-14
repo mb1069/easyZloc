@@ -35,7 +35,7 @@ from tifffile import TiffFile
 from collections import Counter
 import yaml
 
-DEBUG = False
+DEBUG = True
 if DEBUG:
     print('Debug enabled in datasets.py')
 
@@ -127,7 +127,7 @@ class PicassoDataset:
 
         # TODO remove these
         if DEBUG:
-            n_datasets = 100000
+            n_datasets = 5
             self.csv_data = self.csv_data.iloc[0:n_datasets]
             self.spots = self.spots[0:n_datasets]
         # Check localisation and extracted spots match
@@ -221,7 +221,7 @@ class TrainingPicassoDataset(PicassoDataset):
 
         if not lazy:
             psfs, coords, zs = self.prepare_training_data()
-            # psfs, coords, zs = self.trim_stack(psfs, coords, zs)
+            psfs, coords, zs = self.trim_stack(psfs, coords, zs)
             psfs = psfs[:, :, :, np.newaxis]
             if raw_data_only:
                 self.data = (psfs, coords), zs
@@ -231,19 +231,6 @@ class TrainingPicassoDataset(PicassoDataset):
                 self.add_noise()
                 self.normalize_psfs()
                 # self.equalize_histograms()
-
-                # self.data = self.split_data(psfs, coords, zs)
-                # self.data = self.normalise_psfs(self.data)
-                print(self.data['train'][0][0].min(), self.data['train'][0][0].max())
-
-                for k, v in self.data.items():
-                    print(k)
-                    print(f'Imgs, \t{v[0][0].shape}')
-                    print(f'\t\t{v[0][0].min()}, {v[0][0].max()}')
-
-                    print(f'Coords, \t{v[0][1].shape}')
-                    print(f'Z coords\t{v[1].shape}')
-            print(self.data['train'][0][0].min(), self.data['train'][0][0].max())
 
     # def equalize_histograms(self):
     #     print('Matching histograms...')
@@ -355,18 +342,10 @@ class TrainingPicassoDataset(PicassoDataset):
 
     def prepare_training_data(self):
         stacks = self.slice_locs_to_stacks()
-        # stacks = fake_psfs()
 
         offsets = align_psfs(np.array(stacks))
         psfs, coords, zs = self.stacks_to_spots(stacks, offsets)
         
-        # TODO uncomment?
-        # psfs = np.stack([norm_zero_one(psf) for psf in psfs])
-        # assert np.all(psfs.min(axis=(1,2))==0)
-        # assert np.all(psfs.max(axis=(1,2))==1)
-        print('Coords', coords.min(), coords.max())
-
-
         print('Prepared stacks...')
         return psfs, coords, zs       
 
@@ -382,7 +361,10 @@ class TrainingPicassoDataset(PicassoDataset):
             offset = -offsets[i]
 
             stack_depth = psf.shape[0]
-            z = (stack_offset_to_z(offset, psf, 1) - ref_0) * self.config['voxel_sizes'][0]
+            z = (stack_offset_to_z(offset, psf, 1)) * self.config['voxel_sizes'][0]
+            print(z.min(), z.max(), ref_0 * self.config['voxel_sizes'][0])
+            z -= (2 * ref_0 * self.config['voxel_sizes'][0])
+            print(z.min(), z.max(), ref_0)
             for z_val in z:
                 entry = self.csv_data.iloc[i].to_dict()
                 entry['z [nm'] = z_val
