@@ -35,7 +35,7 @@ from tifffile import TiffFile
 from collections import Counter
 import yaml
 
-DEBUG = True
+DEBUG = False
 if DEBUG:
     print('Debug enabled in datasets.py')
 

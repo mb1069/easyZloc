@@ -6,9 +6,9 @@ import glob
 from tifffile import imread
 import pytest 
 
-from final_project.smlm_3d.data.visualise import show_psf_axial
-from final_project.smlm_3d.data.align_psfs import align_psfs, tf_find_optimal_roll, norm_zero_one
-from final_project.smlm_3d.test.extract_psfs import TEST_DATA_DIR
+from data.visualise import show_psf_axial
+from data.align_psfs import align_psfs, tf_find_optimal_roll, norm_zero_one
+from test.extract_psfs import TEST_DATA_DIR
 
 
 

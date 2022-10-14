@@ -1,5 +1,5 @@
-from final_project.smlm_3d.config.datasets import dataset_configs
-from final_project.smlm_3d.data.datasets import TrainingPicassoDataset
+from config.datasets import dataset_configs
+from data.datasets import TrainingPicassoDataset
 import os
 from tifffile import imwrite
 import shutil
