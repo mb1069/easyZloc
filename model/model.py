@@ -1,7 +1,9 @@
-from json import load
 import tensorflow as tf
+import os
+from tensorflow import keras
+import tarfile
 
-from tensorflow.keras.layers import RandomTranslation, GaussianNoise, Normalization, BatchNormalization, ReLU
+from tensorflow.keras.layers import BatchNormalization, ReLU
 from tensorflow.keras import Model, Sequential
 from tensorflow.keras import layers as Layers
 from tensorflow.keras.layers import Dense, Dropout, Input
@@ -91,13 +93,25 @@ def resnet_model(bound):
 #     model_name = f'{dataset}'
 # model_path = os.path.join('/home/miguel/Projects/uni/phd/smlm_z/final_project/smlm_3d/experiments/model_ckpt', f'{dataset}{version}')
 
-from tensorflow import keras
 
 def load_new_model(bound, lr):
     print('Loading model...')
     model = resnet_model(bound)
     model.compile(loss='mean_squared_error',optimizer=keras.optimizers.Adam(learning_rate=lr, decay=1e-6),metrics=['mean_absolute_error'])
     return model
+
+MODEL_DIR = os.path.join(os.path.dirname(__file__), 'trained_models')
+
+def get_model_path(model_name):
+    return os.path.join(MODEL_DIR, model_name)
+
+def save_model(model, model_name):
+    model.save(get_model_path(model_name))
+    
+def load_trained_model(model_name):
+    return keras.models.load_model(get_model_path(model_name))
+
+
 
 
 def get_pretrained_model():
@@ -109,8 +123,8 @@ def get_pretrained_model():
         input_tensor=None,
         input_shape=None,
         pooling=None,
-        classes=1000,
-        classifier_activation='softmax'
+        classes=1,
+        classifier_activation='linear'
     )
 
 
