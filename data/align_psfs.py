@@ -122,10 +122,6 @@ def pad_and_fit_spline(coords, psf, z, z_ups):
     #     plt.plot(z_ups, cs(z_ups), '.', label='smooth')
     #     plt.legend()
     #     plt.show()
-    if x == 15 and y == 15:
-        plt.plot(z, psf[:, x, y])
-        plt.plot(z_ups, cs(z_ups))
-        plt.show()
     return x, y, cs(z_ups)
     
 def upsample_psf(psf, ratio=UPSCALE_RATIO):
