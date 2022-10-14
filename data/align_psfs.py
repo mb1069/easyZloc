@@ -122,10 +122,6 @@ def pad_and_fit_spline(coords, psf, z, z_ups):
     #     plt.plot(z_ups, cs(z_ups), '.', label='smooth')
     #     plt.legend()
     #     plt.show()
-    if x == 15 and y == 15:
-        plt.plot(z, psf[:, x, y])
-        plt.plot(z_ups, cs(z_ups))
-        plt.show()
     return x, y, cs(z_ups)
     
 def upsample_psf(psf, ratio=UPSCALE_RATIO):
@@ -153,6 +149,8 @@ def mse(A,B):
 
 def plot_correction(target, img, psf_corrected, errors):
     if DEBUG:
+        print(target.min(), target.max())
+        print(img.min(), img.max())
         plt.plot(target.max(axis=(1,2)), label='target')
         plt.plot(img.max(axis=(1,2)),  label='original')
         plt.plot(psf_corrected.max(axis=(1,2)), label='corrected', )
@@ -178,7 +176,7 @@ def tf_find_optimal_roll(target, img, upscale_ratio=UPSCALE_RATIO):
     psf_corrected = np.roll(img, int(best_i), axis=0)
     plot_correction(target, img, psf_corrected, errors)
 
-    return best_i/upscale_ratio
+    return -best_i/upscale_ratio
 
 def create_circular_mask(h, w, center=None, radius=None):
 
@@ -219,13 +217,11 @@ def align_psfs(psfs):
 
     ref_psf = prepare_psf(psfs[0])
     offsets = np.zeros((psfs.shape[0]))
-
-    ref_0 = get_peak_sharpness(psfs[0])
-
+    
     for i in trange(1, psfs.shape[0]):
         psf = psfs[i]
         psf = prepare_psf(psf)
-        psf = match_histograms(psf, psfs[0])
+        psf = match_histograms(psf, ref_psf)
         offset = tf_find_optimal_roll(ref_psf, psf)
         offsets[i] = offset
         if DEBUG:
@@ -233,5 +229,4 @@ def align_psfs(psfs):
             imgs = np.concatenate((ref_psf, offset_psf), axis=2)
             show_psf_axial(imgs, subsample_n=30)
 
-    offsets -= ref_0
     return offsets

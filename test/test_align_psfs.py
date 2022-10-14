@@ -1,4 +1,4 @@
-from pyotf.otf import HanserPSF, apply_aberration, apply_named_aberration
+from pyotf.otf import HanserPSF, apply_aberration
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -6,8 +6,7 @@ import glob
 from tifffile import imread
 import pytest 
 
-from data.visualise import show_psf_axial
-from data.align_psfs import align_psfs, tf_find_optimal_roll, norm_zero_one
+from data.align_psfs import tf_find_optimal_roll, norm_zero_one
 from test.extract_psfs import TEST_DATA_DIR
 
 
@@ -19,6 +18,8 @@ def load_experimental_bead_stacks():
     }
 
 exp_stacks = load_experimental_bead_stacks()
+if len(exp_stacks.keys()) == 0:
+    raise Exception('Test files missing')
 
 kwargs = dict(
     wl=647,
@@ -50,4 +51,4 @@ def test_tf_find_optimal_roll_retrieves_correct_roll(blank_psf):
         rolled_psf = np.roll(blank_psf, offset, axis=0)
         for _ in range(10):
             noised_rolled_psf = rolled_psf + np.random.normal(0, 5e-2, size=rolled_psf.shape)
-            assert tf_find_optimal_roll(blank_psf, noised_rolled_psf, 1) == -offset
+            assert tf_find_optimal_roll(blank_psf, noised_rolled_psf, 1) == offset

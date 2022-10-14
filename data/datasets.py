@@ -101,6 +101,15 @@ class PicassoDataset:
 
         with open(os.path.join(config['bpath'], config['locs_yaml']), 'r') as f:
             self.locs_info, self.fitting_info = list(yaml.safe_load_all(f))
+        
+        
+        dtype = self.locs_info['Data Type']
+        if dtype == 'uint16':
+            maxval = np.iinfo(np.uint16).max
+        else:
+            raise NotImplementedError
+        
+        self.maxval = maxval
 
         f = h5py.File(os.path.join(config['bpath'], config['spots']))
         self.spots = np.array(f['spots'])
@@ -109,10 +118,9 @@ class PicassoDataset:
 
         # TODO remove these
         if DEBUG:
-            self.csv_data = self.csv_data.iloc[0:5]
-            self.spots = self.spots[0:5]
-        self.csv_data = self.csv_data.iloc[0:100]
-        self.spots = self.spots[0:100]
+            n_datasets = 100000
+            self.csv_data = self.csv_data.iloc[0:n_datasets]
+            self.spots = self.spots[0:n_datasets]
         # Check localisation and extracted spots match
         assert self.csv_data.shape[0] == self.spots.shape[0]
 
@@ -160,10 +168,57 @@ def standardise(data, mean=None, std=None):
         std = np.std(data)
     return (data - mean) / std
 
+def stack_offset_to_z(offset, psf, z_voxel_size):
+    stack_depth = psf.shape[0]
+    z = (np.arange(0, stack_depth) + offset) * z_voxel_size
+    return z
+
+def fake_psfs():
+    from pyotf.otf import HanserPSF, apply_aberration, apply_named_aberration
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plt.rcParams['figure.figsize'] = [5, 5]
+
+    from data.visualise import show_psf_axial, grid_psfs
+    from data.align_psfs import align_psfs, tf_find_optimal_roll, mask_img_stack, norm_zero_one
+
+    align_psfs.debug = False
+
+    kwargs = dict(
+        wl=647,
+        na=1.3,
+        ni=1.51,
+        res=106,
+        zres=50,
+        size=32,
+        zsize=200,
+        vec_corr="none",
+        condition="none",
+    )
+    psf = HanserPSF(**kwargs)
+    psf = apply_aberration(psf, np.array([0, 0, 0, 0, 0]), np.array([0, 0, 0, 0, 1]))
+
+    blank_psf = psf.PSFi
+
+    blank_psf = norm_zero_one(blank_psf) * 255
+    from data.estimate_offset import get_peak_sharpness
+    fake_stacks = []
+    offsets = []
+    for offset in [0, 5, 10]:
+        offsets.append(offset)
+        rolled_psf = np.roll(blank_psf, offset, axis=0)
+        rolled_psf = generate_noisy_psf(rolled_psf)
+        fake_stacks.append(rolled_psf)
+
+    fake_stacks = np.array(fake_stacks)
+    fake_stacks[fake_stacks<0] = 0
+    return fake_stacks
+
+
 class TrainingPicassoDataset(PicassoDataset):
     def __init__(self, config, z_range=1000, raw_data_only=False, lazy=False):
         super().__init__(config)
-
         self.z_range = z_range
         self.img = imread(os.path.join(config['bpath'], config['img']))
         self.frame = imread(os.path.join(config['bpath'], config['frame']))
@@ -177,13 +232,13 @@ class TrainingPicassoDataset(PicassoDataset):
                 self.data = (psfs, coords), zs
             else:
                 print('masking')
-                self.data = self.scale_and_split(psfs, coords, zs)
-                print(1, self.data['train'][0][0].min(), self.data['train'][0][0].max())
-                # self.add_noise()
+                self.data = self.split_data(psfs, coords, zs)
+                self.add_noise()
+                self.normalize_psfs()
                 # self.equalize_histograms()
 
                 # self.data = self.split_data(psfs, coords, zs)
-                self.data = self.normalise_psfs(self.data)
+                # self.data = self.normalise_psfs(self.data)
                 print(self.data['train'][0][0].min(), self.data['train'][0][0].max())
 
                 for k, v in self.data.items():
@@ -195,12 +250,16 @@ class TrainingPicassoDataset(PicassoDataset):
                     print(f'Z coords\t{v[1].shape}')
             print(self.data['train'][0][0].min(), self.data['train'][0][0].max())
 
-    def equalize_histograms(self):
-        print('Matching histograms...')
-        mean_train_img = np.mean(self.data['train'][0][0], axis=0)
+    # def equalize_histograms(self):
+    #     print('Matching histograms...')
+    #     mean_train_img = np.mean(self.data['train'][0][0], axis=0)
+    #     for k in self.data.keys():
+    #         self.data[k][0][0] = np.stack([match_histograms(img, mean_train_img) for img in self.data[k][0][0]])
+    #     save_ref_img(mean_train_img)
+
+    def normalize_psfs(self):
         for k in self.data.keys():
-            self.data[k][0][0] = np.stack([match_histograms(img, mean_train_img) for img in self.data[k][0][0]])
-        save_ref_img(mean_train_img)
+            self.data[k][0][0] = self.data[k][0][0].astype(float) / self.maxval
 
     def save_norm_parameters(self, psf_mean, psf_std):
 
@@ -214,22 +273,11 @@ class TrainingPicassoDataset(PicassoDataset):
         with open(NORM_CONFIG_FILE, 'w') as f:
             json.dump(data, f)
 
-    def scale_and_split(self, psfs, coords, zs):
-        # scale to [0, 1]
-        # psfs = norm_zero_one(psfs)
-        print(psfs.min(), psfs.max())
-        
-
-        data = self.split_data(psfs, coords, zs)
-
-        print(data['train'][0][0].min(), data['train'][0][0].max())
-        return data
-
-    def normalise_psfs(self, data):
-        print('Normalising psfs...')
-        for k in data.keys():
-            data[k][0][0] = np.stack([norm_one_one(img) for img in data[k][0][0]])
-        return data
+    # def normalise_psfs(self, data):
+    #     print('Normalising psfs...')
+    #     for k in data.keys():
+    #         data[k][0][0] = np.stack([norm_one_one(img) for img in data[k][0][0]])
+    #     return data
         # psf_mean = np.mean(data['train'][0][0])
         # psf_std =  np.std(data['train'][0][0])
         # for k in data.keys():
@@ -297,7 +345,6 @@ class TrainingPicassoDataset(PicassoDataset):
         data['train'] = [[psf_train, coords_train], zs_train]
         data['val'] = [[psf_val, coords_val], zs_val]
         data['test'] = [[psf_test, coords_test], zs_test]
-
         return data
 
     def slice_locs_to_stacks(self):
@@ -313,13 +360,16 @@ class TrainingPicassoDataset(PicassoDataset):
 
     def prepare_training_data(self):
         stacks = self.slice_locs_to_stacks()
-        offsets = align_psfs(np.array(stacks)) * self.config['voxel_sizes'][0]
+        # stacks = fake_psfs()
+
+        offsets = align_psfs(np.array(stacks))
         psfs, coords, zs = self.stacks_to_spots(stacks, offsets)
         
         # TODO uncomment?
         # psfs = np.stack([norm_zero_one(psf) for psf in psfs])
         # assert np.all(psfs.min(axis=(1,2))==0)
         # assert np.all(psfs.max(axis=(1,2))==1)
+        print('Coords', coords.min(), coords.max())
         assert coords.min() >= 0
         assert coords.max() <= 1
 
@@ -327,23 +377,28 @@ class TrainingPicassoDataset(PicassoDataset):
         return psfs, coords, zs       
 
     def stacks_to_spots(self, stacks, offsets):
+        ref_0 = get_peak_sharpness(stacks[0])
         stack_depth = stacks.shape[1]
-        z_voxel_size = self.config['voxel_sizes'][0]
         repeat_csv = []
 
         zs = np.zeros((stacks.shape[0] * stacks.shape[1]))
         coords = np.zeros((stacks.shape[0] * stacks.shape[1], 2))
-        for i in range(stacks.shape[0]):
-            start_i = i*stack_depth
-            end_i = (i+1)*stack_depth
-            z = np.linspace(0, stack_depth-1, num=stack_depth) * z_voxel_size - offsets[i]
-            zs[start_i:end_i] = z
+        for i in range(len(offsets)):
+            psf = stacks[i]
+            offset = -offsets[i]
+
+            stack_depth = psf.shape[0]
+            z = (stack_offset_to_z(offset, psf, 1) - ref_0) * self.config['voxel_sizes'][0]
             for z_val in z:
                 entry = self.csv_data.iloc[i].to_dict()
                 entry['z [nm'] = z_val
                 repeat_csv.append(entry)
+            
+            start_i = i*stack_depth
+            end_i = (i+1)*stack_depth
+            zs[start_i:end_i] = z
+
             coords[start_i:end_i] = np.repeat(self.coords[i][np.newaxis], stack_depth, axis=0)
-        
         spots = np.concatenate(stacks)
         self.csv_data = pd.DataFrame.from_records(repeat_csv)
 
