@@ -6,8 +6,8 @@ from multiprocessing import Pool
 from itertools import product
 from functools import partial
 import tqdm
-from final_project.smlm_3d.data.estimate_offset import get_peak_sharpness
-from final_project.smlm_3d.data.visualise import show_psf_axial
+from data.estimate_offset import get_peak_sharpness
+from data.visualise import show_psf_axial
 from keras.metrics import mean_squared_error
 
 UPSCALE_RATIO = 10
