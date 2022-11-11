@@ -1,3 +1,4 @@
+from multiprocessing.spawn import prepare
 import numpy as np
 from scipy.interpolate import UnivariateSpline
 from tqdm import trange
@@ -142,7 +143,7 @@ def upsample_psf(psf, ratio=UPSCALE_RATIO):
     return upsampled_psf
 
 def pad_psf(psf):
-    return np.pad(psf, ((20, 20), (0, 0), (0, 0)), mode='constant', constant_values=np.median(psf))
+    return np.pad(psf, ((20, 20), (0, 0), (0, 0)), mode='edge')
 
 def mse(A,B):
     return ((A-B)**2).mean()
@@ -200,7 +201,7 @@ from skimage.filters import gaussian
 def prepare_psf(psf):
     psf = gaussian(psf, sigma=1)
     psf = norm_zero_one(psf.copy())
-    # psf = pad_psf(psf)
+    psf = pad_psf(psf)
     psf = upsample_psf(psf)
     # psf = mask_img_stack(psf, 12)
     return psf
@@ -209,19 +210,48 @@ def prepare_psf(psf):
 import tensorflow as tf
 
 from skimage.exposure import match_histograms
+from sklearn.metrics.pairwise import euclidean_distances
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import minimum_spanning_tree
 
-def align_psfs(psfs):
+def find_seed_psf(df):
+    # Seed PSF - most centered PSF in FOV
+    center = df[['x', 'y']].mean(axis=0).to_numpy()
+    coords = df[['x', 'y']].to_numpy()
+    dists = euclidean_distances([center], coords).squeeze()
+    first_point = np.argmin(dists)
+    return first_point
+
+def gen_minimum_spanning_tree(df):
+    coords = df[['x', 'y']].to_numpy()
+    dists = euclidean_distances(coords, coords)
+    m = csr_matrix(dists)
+    adj_matrix = minimum_spanning_tree(m).toarray()
+    adj_matrix[adj_matrix>0] = 1
+    sim_adj_matrix = adj_matrix + adj_matrix.T
+    return sim_adj_matrix
+
+def get_or_prepare_psf(prepped_psfs, raw_psfs, idx):
+    if idx not in prepped_psfs:
+        prepped_psfs[idx] = prepare_psf(raw_psfs[idx])
+    return prepped_psfs[idx]
+
+def align_psfs(psfs, df):
     print(f'Aligning {psfs.shape} psfs...')
+
+    seed_psf = find_seed_psf(df)
 
     ref_psf = prepare_psf(psfs[0])
     offsets = np.zeros((psfs.shape[0]))
 
-    ref_0 = get_peak_sharpness(psfs[0])
+    ref_0 = get_peak_sharpness(psfs[seed_psf])
 
     for i in trange(1, psfs.shape[0]):
         psf = psfs[i]
         psf = prepare_psf(psf)
-        psf = match_histograms(psf, psfs[0])
+        print(psf.min(), psf.max())
+        print(ref_psf.min(), ref_psf.max())
+        psf = match_histograms(psf, ref_psf)
         offset = tf_find_optimal_roll(ref_psf, psf)
         offsets[i] = offset
         if DEBUG:
@@ -230,4 +260,5 @@ def align_psfs(psfs):
             show_psf_axial(imgs, subsample_n=30)
 
     offsets -= ref_0
+
     return offsets

@@ -42,9 +42,6 @@ def resnet_model(bound):
     img_input = Input((bound, bound, 1))
     coords_input = Input((2,))
     
-#     augment_data = Sequential([
-#         RandomTranslation(1/bound, 1/bound)
-#     ])
     
     feature_extraction = Sequential([
         Conv2D(64, 7, 2, padding='same'),
@@ -94,10 +91,14 @@ def resnet_model(bound):
 # model_path = os.path.join('/home/miguel/Projects/uni/phd/smlm_z/final_project/smlm_3d/experiments/model_ckpt', f'{dataset}{version}')
 
 
+def compile_model(model, lr):
+    model.compile(loss='mean_squared_error',optimizer=keras.optimizers.Adam(learning_rate=lr, decay=1e-6),metrics=['mean_absolute_error'])
+    print(model.summary())
+
 def load_new_model(bound, lr):
     print('Loading model...')
     model = resnet_model(bound)
-    model.compile(loss='mean_squared_error',optimizer=keras.optimizers.Adam(learning_rate=lr, decay=1e-6),metrics=['mean_absolute_error'])
+    compile_model(model, lr)
     return model
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), 'trained_models')
@@ -107,24 +108,90 @@ def get_model_path(model_name):
 
 def save_model(model, model_name):
     model.save(get_model_path(model_name))
-    
+
 def load_trained_model(model_name):
-    return keras.models.load_model(get_model_path(model_name))
+    model = keras.models.load_model(get_model_path(model_name))
+    return model
 
 
+import matplotlib.pyplot as plt
+from tqdm.keras import TqdmCallback
+
+import wandb
+import os
+
+BATCH_SIZE = 2**10
+LEARNING_RATE = 1e-3
+
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
+
+def train_model(model, dataset):
+
+    callbacks = [
+        ReduceLROnPlateau(
+        monitor='mean_absolute_error', factor=0.1, patience=25, verbose=True,
+        mode='min', min_delta=1, min_lr=1e-7,),
+        EarlyStopping(monitor='val_mean_absolute_error', patience=150, verbose=False, min_delta=1, restore_best_weights=True),
+        TqdmCallback(verbose=1),
+    ]
+
+    history = model.fit(*dataset['train'], epochs=5000, shuffle=True, verbose=False, batch_size=BATCH_SIZE, validation_data=(*dataset['val'],), callbacks=callbacks)
+    
+    plt.rcParams['figure.figsize'] = [10, 5]
+    fig, ax1 = plt.subplots()
+    ax1.plot(history.history['mean_absolute_error'], label='mse')
+    ax1.plot(history.history['val_mean_absolute_error'], label='val_mse')
+    ax1.set_yscale('log')
+    ax1.legend(loc=1)
+    ax2 = ax1.twinx()
+    ax2.plot(history.history['lr'], label='lr')
+    ax2.legend(loc=0)
+
+    plt.show()
+    return model
+
+def get_resnet_101(bound, n_channels, lr):
+    img_input_shape = (bound, bound, n_channels)
+    img_input = Input(img_input_shape)
+    coords_input = Input((2,))
+
+    weights = 'imagenet' if n_channels == 3 else None
+    print(f'Using weights {weights}')
+    resnet = tf.keras.applications.resnet_v2.ResNet101V2(
+            include_top=False,
+            weights=weights,
+            pooling='max',
+            input_shape=img_input_shape
+        )
+    # resnet = tf.keras.applications.convnext.ConvNeXtTiny(
+    #     model_name='convnext_tiny',
+    #     include_top=False,
+    #     include_preprocessing=False,
+    #     input_shape=img_input_shape,
+    #     pooling='avg',
+    # )
 
 
-def get_pretrained_model():
-    return tf.keras.applications.convnext.ConvNeXtBase(
-        model_name='convnext_base',
-        include_top=True,
-        include_preprocessing=True,
-        weights='imagenet',
-        input_tensor=None,
-        input_shape=None,
-        pooling=None,
-        classes=1,
-        classifier_activation='linear'
-    )
+    x = img_input
+    augmentation = Sequential([
+        tf.keras.layers.GaussianNoise(0.2, seed=42),
+        tf.keras.layers.RandomTranslation(1/bound, 1/bound)
+    ])
+    x = augmentation(x)
+    x = resnet(x)
+    
+
+    mlp = Sequential([
+        Dense(1024),
+        Dropout(0.5),
+        Dense(1024),
+        Dropout(0.5),
+        Dense(1)
+    ])
+    x = tf.concat((x, coords_input), axis=1)
+    x = mlp(x)
+    model = Model(inputs=(img_input, coords_input), outputs=x)
+    compile_model(model, lr)
+    return model
 
 
