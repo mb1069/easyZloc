@@ -3,7 +3,7 @@ from data.datasets import TrainingPicassoDataset
 import os
 from tifffile import imwrite
 import shutil
-TEST_DATA_DIR = '/home/miguel/Projects/uni/phd/smlm_z/test/psfs'
+TEST_DATA_DIR = 'test/psfs'
 
 if __name__=='__main__':
     shutil.rmtree(TEST_DATA_DIR)
