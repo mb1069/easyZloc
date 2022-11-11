@@ -5,12 +5,13 @@ import os
 import glob
 from tifffile import imread
 import pytest 
+import pandas as pd
 
 from data.visualise import show_psf_axial
 from data.align_psfs import align_psfs, tf_find_optimal_roll, norm_zero_one
 from test.extract_psfs import TEST_DATA_DIR
 
-
+np.random.seed(42)
 
 def load_experimental_bead_stacks():
     fpaths = glob.glob(f'{TEST_DATA_DIR}/*.tif')
@@ -19,7 +20,7 @@ def load_experimental_bead_stacks():
     }
 
 exp_stacks = load_experimental_bead_stacks()
-
+assert len(exp_stacks) > 0
 kwargs = dict(
     wl=647,
     na=1.3,
@@ -51,3 +52,22 @@ def test_tf_find_optimal_roll_retrieves_correct_roll(blank_psf):
         for _ in range(10):
             noised_rolled_psf = rolled_psf + np.random.normal(0, 5e-2, size=rolled_psf.shape)
             assert tf_find_optimal_roll(blank_psf, noised_rolled_psf, 1) == -offset
+
+def test_align_psfs_should_retrieve_correct_offsets():
+    psfs = []
+    offsets = np.array([-10, -5, 5, 10, 15, 19])
+    xs = offsets
+    ys = np.zeros(xs.shape[0])
+    for o in offsets:
+        rolled_psf = np.roll(blank_psf, o, axis=0)
+        # rolled_psf = rolled_psf + np.random.normal(0, 5e-2, size=rolled_psf.shape)
+        psfs.append(rolled_psf)
+    df = pd.DataFrame.from_dict({
+        'x': xs,
+        'y': ys
+    })
+
+    psfs = np.stack(psfs)
+    retrieved_offsets = align_psfs(psfs, df)
+    print(-offsets)
+    print(retrieved_offsets)
