@@ -117,7 +117,6 @@ def load_trained_model(model_name):
 import matplotlib.pyplot as plt
 from tqdm.keras import TqdmCallback
 
-import wandb
 import os
 
 BATCH_SIZE = 2**10
