@@ -1,0 +1,7 @@
+# This is a boilerplate parameters config generated for pipeline 'preprocessing'
+# using Kedro 0.18.4.
+#
+# Documentation for this file format can be found in "Parameters"
+# Link: https://kedro.readthedocs.io/en/0.18.4/kedro_project_setup/configuration.html#parameters
+
+model_input_shape: [32, 32, 3]
