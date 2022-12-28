@@ -1,0 +1,38 @@
+# Here you can define all your data sets by using simple YAML syntax.
+#
+# Documentation for this file format can be found in "The Data Catalog"
+# Link: https://kedro.readthedocs.io/en/stable/data/data_catalog.html
+
+bead_stack:
+  type: smlm_z.extras.datasets.TiffDataSet
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS-as-stacks.tif
+
+spots:
+  type: smlm_z.extras.datasets.SpotsDataSet
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS/0020_spots.hdf5
+  key: spots
+
+locs:
+  type: pandas.HDFDataSet
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS/0020_locs.hdf5
+  key: locs
+
+# calibration_yaml:
+#   type: yaml.YAMLDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS-as-stacks_spots.yaml
+
+# norm_coords:
+#   type: pandas.CSVDataSet
+#   filepath: data/05_model_input/coords.csv
+
+# training_stacks:
+#   type: smlm_z.extras.datasets.TiffDataSet
+#   filepath: data/05_model_input/spots.tif
+
+X:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X.pk
+
+y:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y.pk
