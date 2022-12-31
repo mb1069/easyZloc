@@ -36,3 +36,34 @@ X:
 y:
   type: pickle.PickleDataSet
   filepath: data/05_model_input/y.pk
+
+model:
+  type: pickle.PickleDataSet
+  filepath: data/06_models/model.pk
+
+training_plot:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/training_plot.png
+    save_args:
+      format: png
+  
+clf_metrics:
+    type: kedro_mlflow.io.metrics.MlflowMetricsDataSet
+
+data_plots:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/05_model_input/data_plots/
+    save_args:
+      format: png
+
+clf_figures:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/clf_perf/
+    save_args:
+      format: png

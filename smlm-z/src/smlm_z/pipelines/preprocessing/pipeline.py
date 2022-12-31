@@ -5,7 +5,7 @@ generated using Kedro 0.18.4
 
 from kedro.pipeline import Pipeline, node, pipeline
 
-from .nodes import extract_training_stacks, resize_stacks, norm_coordinates, align_stacks, stacks_to_training_data
+from .nodes import extract_training_stacks, resize_stacks, norm_coordinates, align_stacks, stacks_to_training_data, norm_images
 
 def create_pipeline(**kwargs) -> Pipeline:
     return pipeline([
@@ -38,8 +38,15 @@ def create_pipeline(**kwargs) -> Pipeline:
             tags=['training']
         ),
         node(
+            func=norm_images,
+            inputs='resized_stacks',
+            outputs='norm_stacks',
+            name='norm_stacks',
+            tags=['training'],
+        ),
+        node(
             func=stacks_to_training_data,
-            inputs=['resized_stacks', 'norm_coords', 'offsets'],
+            inputs=['norm_stacks', 'norm_coords', 'offsets'],
             outputs=['X', 'y'],
             name='stacks_to_training_data',
             tags=['training']
@@ -47,4 +54,4 @@ def create_pipeline(**kwargs) -> Pipeline:
     ],
     inputs=['spots', 'locs', 'bead_stack'],
     outputs=['X', 'y']
-    )
+)

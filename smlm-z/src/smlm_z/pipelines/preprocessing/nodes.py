@@ -11,6 +11,9 @@ import tensorflow as tf
 from skimage.feature import match_template
 from .align_psfs import classic_align_psfs
 
+DEBUG = False
+
+
 def get_spot_corner_coords(loc, spot_size):
     x, y = loc['x'], loc['y']
     x0 = round(x - (spot_size/2))
@@ -18,20 +21,13 @@ def get_spot_corner_coords(loc, spot_size):
     return x0, y0
 
 
-# def extract_training_stacks(locs: pd.DataFrame, bead_stack: np.array, picasso_params: Dict) -> np.array:
-#     stacks = []
-#     spot_size = picasso_params['spot_size']
-#     for loc in locs.to_dict(orient='records'):
-#         x, y = get_spot_corner_coords(loc, spot_size)
-#         stack = bead_stack[:, x:x+spot_size, y:y+spot_size]
-#         stacks.append(stack)
-#     return np.array(stacks)
-
 def extract_training_stacks(spots: np.array, bead_stack: np.array, picasso_params: Dict) -> np.array:
     spot_size = picasso_params['spot_size']
     frame = bead_stack[20]
     stacks = []
-    for spot in spots[0:3]:
+    if DEBUG:
+        spots = spots[0:3]
+    for spot in spots:
         res = match_template(frame, spot)
         i, j = np.unravel_index(np.argmax(res), res.shape)
         stack = bead_stack[:, i:i+spot_size, j:j+spot_size]
@@ -49,7 +45,9 @@ def align_stacks(bead_stacks: np.array, locs: pd.DataFrame):
 
 
 def norm_coordinates(locs: pd.DataFrame, src_img: np.array) -> pd.DataFrame:
-    xy = locs[['x', 'y']].iloc[0:3]
+    if DEBUG:
+        locs = locs.iloc[0:3]
+    xy = locs[['x', 'y']]
     img_y, img_x = src_img.shape[1:]
     xy['y'] = xy['y'] / img_y
     xy['x'] = xy['x'] / img_x
@@ -66,8 +64,22 @@ def stacks_to_training_data(stacks: np.array, norm_coords: pd.DataFrame, offsets
         psfs.append(psf)
         xy_coords.append(xy)
         z_coords.append(z)
-    
+
     psfs = np.concatenate(psfs)
     xy_coords = np.concatenate(xy_coords)
     z_coords = np.concatenate(z_coords)[:, np.newaxis]
     return (psfs, xy_coords), z_coords
+
+
+def norm_zero_one(img):
+    img_max = img.max()
+    img_min = img.min()
+    return (img - img_min) / (img_max - img_min)
+
+
+def norm_images(psfs: np.array):
+    norm_stacks = []
+    for stack in psfs:
+        stack = np.stack([norm_zero_one(psf) for psf in stack])
+        norm_stacks.append(stack)
+    return np.stack(norm_stacks)
