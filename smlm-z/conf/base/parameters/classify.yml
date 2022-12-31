@@ -1,0 +1,10 @@
+# This is a boilerplate parameters config generated for pipeline 'classify'
+# using Kedro 0.18.4.
+#
+# Documentation for this file format can be found in "Parameters"
+# Link: https://kedro.readthedocs.io/en/0.18.4/kedro_project_setup/configuration.html#parameters
+
+training:
+  learning_rate: 1.e-3
+  batch_size: 128
+  max_epochs: 5000
