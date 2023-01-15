@@ -6,3 +6,16 @@ picasso:
 train_size: 0.8
 val_size: 0.1
 test_size: 0.1
+
+images:
+  train:
+    # in nm
+    z_step: 50
+    xy_res: 100
+    shape: [41, 512, 512]
+  exp:
+    shape: [64, 64]
+
+random_seed: 42
+
+DEBUG: false
