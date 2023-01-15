@@ -3,7 +3,7 @@ from typing import Dict
 
 from kedro.pipeline import Pipeline
 
-from .pipelines import preprocessing as pre, classify as clf
+from .pipelines import preprocessing as pre, classify as clf, reconstruct_nucleopore as rn
 
 from kedro_mlflow.pipeline import pipeline_ml_factory
 
@@ -15,8 +15,9 @@ def register_pipelines() -> Dict[str, Pipeline]:
     """
     pre_pipeline = pre.create_pipeline()
     clf_pipeline = clf.create_pipeline()
+    rn_pipeline = rn.create_pipeline()
 
-    pipeline = pre_pipeline + clf_pipeline
+    pipeline = pre_pipeline + clf_pipeline + rn_pipeline
 
     # training_pipeline_ml = pipeline_ml_factory(
     #     training=pipeline.only_nodes_with_tags("training"),

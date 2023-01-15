@@ -21,13 +21,13 @@ locs:
 #   type: yaml.YAMLDataSet
 #   filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS-as-stacks_spots.yaml
 
-# norm_coords:
-#   type: pandas.CSVDataSet
-#   filepath: data/05_model_input/coords.csv
+norm_coords:
+  type: pandas.CSVDataSet
+  filepath: data/05_model_input/coords.csv
 
-# training_stacks:
-#   type: smlm_z.extras.datasets.TiffDataSet
-#   filepath: data/05_model_input/spots.tif
+training_stacks:
+  type: smlm_z.extras.datasets.TiffDataSet
+  filepath: data/05_model_input/spots.tif
 
 X:
   type: pickle.PickleDataSet
@@ -38,9 +38,10 @@ y:
   filepath: data/05_model_input/y.pk
 
 model:
-  type: pickle.PickleDataSet
-  filepath: data/06_models/model.pk
-
+  type: tensorflow.TensorFlowModelDataset
+  filepath: data/06_models/model
+  layer: model
+  
 training_plot:
   type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
   data_set:
@@ -48,7 +49,16 @@ training_plot:
     filepath: data/08_reporting/training_plot.png
     save_args:
       format: png
+
+offsets_plot:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/offsets_plot.png
+    save_args:
+      format: png
   
+
 clf_metrics:
     type: kedro_mlflow.io.metrics.MlflowMetricsDataSet
 
@@ -67,3 +77,49 @@ clf_figures:
     filepath: data/08_reporting/clf_perf/
     save_args:
       format: png
+
+scatter_figures:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/scatter_plots/
+    save_args:
+      format: png
+
+# nanopore_epfl_50nm_locs.hdf5
+nanopore_locs:
+  type: pandas.HDFDataSet
+  filepath: data/05_model_input/nanopore_epfl_50nm_locs.hdf5
+  key: locs
+
+nanopore_spots:
+  type: smlm_z.extras.datasets.SpotsDataSet
+  filepath: data/05_model_input/nanopore_epfl_50nm_spots.hdf5
+  key: spots
+
+z_pos:
+  type: pickle.PickleDataSet
+  filepath: data/07_model_output/z_pos.pk
+
+nanopore_plot_3d:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/nanopore_plot_3d.png
+    save_args:
+      format: png
+
+nanopore_gauss_model_fits:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/nanopore_gauss_model_fits/
+    save_args:
+      format: png
+
+resized_spots:
+  type: MemoryDataSet
+norm_df:
+  type: MemoryDataSet
+clustered_locs:
+  type: MemoryDataSet
