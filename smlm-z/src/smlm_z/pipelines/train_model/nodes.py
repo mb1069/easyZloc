@@ -16,11 +16,11 @@ from keras.models import Sequential, Model
 from tensorflow.keras import optimizers
 from keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from tqdm.keras import TqdmCallback
-
+from ..preprocessing.nodes import norm_images
 
 def split_train_val_test(X: Tuple[np.array, np.array], y: np.array, parameters: Dict):
     train_size = parameters['train_size']
-    test_size = parameters['test_size']
+    test_size = parameters['test_size'] / (parameters['test_size']+parameters['val_size'])
     idx = np.arange(0, y.shape[0])
     train_idx, other_idx = train_test_split(
         idx, train_size=train_size, random_state=parameters['random_seed'])
@@ -62,8 +62,8 @@ def get_model(parameters):
     )
     x = img_input
     # augmentation = Sequential([
-    # tf.keras.layers.GaussianNoise(0.2, seed=42),
-    # tf.keras.layers.RandomTranslation(1/bound, 1/bound)
+    #     tf.keras.layers.GaussianNoise(0.2, seed=42),
+    #     tf.keras.layers.RandomTranslation(1/bound, 1/bound)
     # ])
     # x = augmentation(x)
     x = resnet(x)
@@ -92,12 +92,12 @@ def train_classifier(X_train: Tuple[np.array, np.array], y_train: np.array, X_va
     callbacks = [
         ReduceLROnPlateau(monitor='mean_absolute_error', factor=0.1,
                           patience=25, verbose=True, mode='min', min_delta=1, min_lr=1e-7,),
-        EarlyStopping(monitor='val_mean_absolute_error', patience=300,
+        EarlyStopping(monitor='val_mean_absolute_error', patience=200,
                       verbose=False, min_delta=1, restore_best_weights=True),
         TqdmCallback(verbose=1),
     ]
 
-    history = model.fit(X_train, y_train, epochs=1, shuffle=True, verbose=False,
+    history = model.fit(X_train, y_train, epochs=epochs, shuffle=True, verbose=False,
                         batch_size=batch_size, validation_data=(X_val, y_val), callbacks=callbacks)
 
     plt.rcParams['figure.figsize'] = [10, 5]
@@ -196,44 +196,55 @@ def check_data(X_train, y_train, X_val, y_val, X_test, y_test):
     figs.append(create_boxplot(pixel_data, 'min pixel val'))
 
     # Coord values
-    rho_data = {
-        'train': X_train[1][0].flatten(),
-        'val': X_val[1][0].flatten(),
-        'test': X_test[1][0].flatten(),
+    x_data = {
+        'train': X_train[1][:, 0].flatten(),
+        'val': X_val[1][:, 0].flatten(),
+        'test': X_test[1][:, 0].flatten(),
     }
-    figs.append(create_boxplot(rho_data, 'rho'))
+    figs.append(create_boxplot(x_data, 'x'))
 
     # Coord values
-    theta_data = {
-        'train': X_train[1][1].flatten(),
-        'val': X_val[1][1].flatten(),
-        'test': X_test[1][1].flatten(),
+    y_data = {
+        'train': X_train[1][:, 1].flatten(),
+        'val': X_val[1][:, 1].flatten(),
+        'test': X_test[1][:, 1].flatten(),
     }
-    figs.append(create_boxplot(theta_data, 'theta'))
+    figs.append(create_boxplot(y_data, 'y'))
 
     return figs
 
 
+def random_translate(psf, parameters):
+    max_translation_px = parameters['data_augmentation']['max_lateral_translation_px']
+    translation_x = np.random.randint(-max_translation_px, max_translation_px)
+    translation_y = np.random.randint(-max_translation_px, max_translation_px)
+    psf = np.roll(psf, translation_y, axis=1)
+    psf = np.roll(psf, translation_x, axis=0)
+    return psf
+
+
 def augment_psf(psf, parameters):
-    return psf + np.random.normal(0, parameters['data_augmentation']['noise_std'], size=psf.shape)
+    psf += np.random.normal(0, parameters['data_augmentation']['noise_std'], size=psf.shape)
+    psf = random_translate(psf, parameters)
+    return psf
 
 
 def augment_datasets(X_train: Tuple[np.array, np.array], y_train: np.array, parameters: Dict):
     np.random.seed(parameters['random_seed'])
-
     n_aug = y_train.shape[0] * parameters['training']['aug_ratio']
 
     x_psfs, x_coords = X_train
-
     aug_psfs = np.zeros((n_aug, *x_psfs.shape[1:]))
     aug_coords = np.zeros((n_aug, *x_coords.shape[1:]))
     aug_zs = np.zeros((n_aug, 1))
 
     for store_i, select_i in enumerate(np.random.randint(0, y_train.shape[0], size=n_aug)):
-        psf = augment_psf(x_psfs[select_i], parameters)
+        psf = augment_psf(x_psfs[select_i].copy(), parameters)
         aug_psfs[store_i] = psf
         aug_coords[store_i] = x_coords[select_i]
         aug_zs[store_i] = y_train[select_i]
+
+    aug_psfs = norm_images(aug_psfs)
 
     all_psfs = np.concatenate((x_psfs, aug_psfs))
     all_coords = np.concatenate((x_coords, aug_coords))
