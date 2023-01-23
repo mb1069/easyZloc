@@ -5,7 +5,7 @@ generated using Kedro 0.18.4
 
 from kedro.pipeline import Pipeline, node, pipeline
 
-from .nodes import extract_training_stacks, resize_stacks, norm_coordinates, align_stacks, stacks_to_training_data, norm_images, merge_model_inputs
+from .nodes import extract_training_stacks, resize_stacks, norm_coordinates, align_stacks, stacks_to_training_data, norm_images, merge_model_inputs, trim_stacks
 
 def create_pipeline(**kwargs) -> Pipeline:
     return pipeline([
@@ -31,15 +31,8 @@ def create_pipeline(**kwargs) -> Pipeline:
             tags=['training']
         ),
         node(
-            func=norm_images,
-            inputs='training_stacks',
-            outputs='norm_stacks',
-            name='norm_stacks',
-            tags=['training'],
-        ),
-        node(
             func=stacks_to_training_data,
-            inputs=['norm_stacks', 'norm_coords', 'offsets'],
+            inputs=['training_stacks', 'norm_coords', 'offsets'],
             outputs=['psfs', 'xy_coords', 'z_coords'],
             name='stacks_to_training_data',
             tags=['training']
@@ -52,8 +45,22 @@ def create_pipeline(**kwargs) -> Pipeline:
             tags=['training', 'inference']
         ),
         node(
+            func=norm_images,
+            inputs='resized_psfs',
+            outputs='norm_psfs',
+            name='norm_psfs',
+            tags=['training'],
+        ),
+        node(
+            func=trim_stacks,
+            inputs=['norm_psfs', 'xy_coords', 'z_coords', 'parameters'],
+            outputs=['trim_psfs', 'trim_xy_coords', 'trim_z_coords'],
+            name='trim_stacks',
+            tags=['training', 'inference']
+        ),
+        node(
             func=merge_model_inputs,
-            inputs=['resized_psfs', 'xy_coords', 'z_coords'],
+            inputs=['trim_psfs', 'trim_xy_coords', 'trim_z_coords'],
             outputs=['X', 'y'],
             name='merge_model_inputs',
             tags=['training', 'inference']

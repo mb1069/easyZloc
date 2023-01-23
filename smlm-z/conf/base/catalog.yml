@@ -5,16 +5,16 @@
 
 bead_stack:
   type: smlm_z.extras.datasets.TiffDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS-as-stacks.tif
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks.ome.tif
 
 spots:
   type: smlm_z.extras.datasets.SpotsDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS/0020_spots.hdf5
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_spots.hdf5
   key: spots
 
 locs:
   type: pandas.HDFDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS/0020_locs.hdf5
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_locs.hdf5
   key: locs
 
 # calibration_yaml:
@@ -89,12 +89,12 @@ scatter_figures:
 # nanopore_epfl_50nm_locs.hdf5
 nanopore_locs:
   type: pandas.HDFDataSet
-  filepath: data/05_model_input/nanopore_epfl_50nm_locs.hdf5
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_locs.hdf5
   key: locs
 
 nanopore_spots:
   type: smlm_z.extras.datasets.SpotsDataSet
-  filepath: data/05_model_input/nanopore_epfl_50nm_spots.hdf5
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_spots.hdf5
   key: spots
 
 z_pos:
@@ -123,3 +123,11 @@ norm_df:
   type: MemoryDataSet
 clustered_locs:
   type: MemoryDataSet
+
+exp_data_plots:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/05_model_input/exp_data_plots/
+    save_args:
+      format: png

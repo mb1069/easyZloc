@@ -11,4 +11,5 @@ training:
   aug_ratio: 3
 
 data_augmentation:
-  noise_std: 2.e-3
+  noise_std: 0.1
+  max_lateral_translation_px: 1

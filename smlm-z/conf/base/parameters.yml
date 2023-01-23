@@ -19,3 +19,6 @@ images:
 random_seed: 42
 
 DEBUG: false
+
+# in nm above and below focal point
+z_range: 1000

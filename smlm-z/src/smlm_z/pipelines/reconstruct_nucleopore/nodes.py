@@ -10,6 +10,8 @@ from scipy.stats import norm
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from ..train_model.nodes import create_boxplot
+
 
 def cluster_locs(df, parameters):
     np.random.seed(parameters['random_seed'])
@@ -37,7 +39,6 @@ def predict_z(model, spots, df):
     return z_pos
 
 
-
 def scatter_3d(xyz_coords, title=None):
     xyz_coords = xyz_coords.astype(float)
 
@@ -56,6 +57,7 @@ def scatter_3d(xyz_coords, title=None):
 
     return fig
 
+
 def gm_min_bic(data):
     gm_df = pd.DataFrame({'pred': data.squeeze()},
                          index=np.arange(0, data.squeeze().shape[0]))
@@ -68,8 +70,8 @@ def gm_min_bic(data):
     idx = np.argsort(data.squeeze())
 
     fig, axes = plt.subplots(1, 6)
-    
-
+    fig.set_figheight(10)
+    fig.set_figwidth(15)
     for n in range(1, 7):
         gm = GaussianMixture(n_components=n, n_init=20,
                              covariance_type=cov_type).fit(data)
@@ -85,9 +87,9 @@ def gm_min_bic(data):
 
         gm_df['cluster_id'] = labels.astype(str)
 
-
         ax = axes[n-1]
-        sns.histplot(data=gm_df, x='pred', hue='cluster_id', stat='density', alpha=0.2, bins=20, ax=ax)
+        sns.histplot(data=gm_df, x='pred', hue='cluster_id',
+                     stat='density', alpha=0.2, bins=20, ax=ax)
 
         # create necessary things to plot
         x_axis = np.linspace(data.min(), data.max(), 50)
@@ -126,7 +128,7 @@ def recreate_sample(all_z_pos, locs):
             continue
         idx = np.argwhere(locs['cluster_id'].to_numpy() == cid).squeeze()
         coords = np.zeros((idx.shape[0], 2))
-        
+
         preds = all_z_pos[idx]
     #     preds -= preds.min()
     #     preds += 0.00000001
@@ -146,3 +148,37 @@ def recreate_sample(all_z_pos, locs):
 
     fig_3d = scatter_3d(res[['x', 'y', 'z']].to_numpy())
     return fig_3d, all_fit_figs
+
+
+def check_exp_data(psfs, df):
+    xy_coords = df[['x', 'y']].to_numpy()
+    X = (psfs, xy_coords)
+    figs = []
+    pixel_data = {
+        'exp': X[0].mean(axis=(1, 2, 3)),
+    }
+    figs.append(create_boxplot(pixel_data, 'mean pixel val'))
+
+    pixel_data = {
+        'exp': X[0].max(axis=(1, 2, 3)),
+    }
+    figs.append(create_boxplot(pixel_data, 'max pixel val'))
+
+    pixel_data = {
+        'exp': X[0].min(axis=(1, 2, 3)),
+    }
+    figs.append(create_boxplot(pixel_data, 'min pixel val'))
+
+    # Coord values
+    x_data = {
+        'exp': X[1][:, 0].flatten(),
+    }
+    figs.append(create_boxplot(x_data, 'x'))
+
+    # Coord values
+    y_data = {
+        'exp': X[1][:, 1].flatten(),
+    }
+    figs.append(create_boxplot(y_data, 'y'))
+
+    return figs

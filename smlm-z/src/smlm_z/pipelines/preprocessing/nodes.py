@@ -89,12 +89,28 @@ def norm_zero_one(img):
 
 
 def norm_images(psfs: np.array):
+    imgs =  np.stack([norm_zero_one(psf) for psf in psfs])
+    return imgs
+
+
+def norm_stacks(stacks: np.array):
+    print('Stacks', stacks.shape)
     norm_stacks = []
-    for stack in psfs:
-        stack = np.stack([norm_zero_one(psf) for psf in stack])
+    for stack in stacks:
+        stack = norm_images(stack)
         norm_stacks.append(stack)
     return np.stack(norm_stacks)
 
 
 def merge_model_inputs(resized_psfs, xy_coords, z_coords):
     return (resized_psfs, xy_coords), z_coords
+
+def trim_stacks(psfs, xy_coords, z_coords, parameters):
+    z_range = parameters['z_range']
+    z_coords -= z_coords.mean()
+    idx = np.argwhere(abs(z_coords.squeeze()) < z_range).squeeze()
+    psfs = psfs[idx]
+    xy_coords = xy_coords[idx]
+    z_coords = z_coords[idx]
+
+    return psfs, xy_coords, z_coords
