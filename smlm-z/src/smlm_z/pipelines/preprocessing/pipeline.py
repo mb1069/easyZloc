@@ -32,7 +32,7 @@ def create_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func=stacks_to_training_data,
-            inputs=['training_stacks', 'norm_coords', 'offsets'],
+            inputs=['training_stacks', 'norm_coords', 'offsets', 'parameters'],
             outputs=['psfs', 'xy_coords', 'z_coords'],
             name='stacks_to_training_data',
             tags=['training']
@@ -67,5 +67,5 @@ def create_pipeline(**kwargs) -> Pipeline:
         )
     ],
     inputs=['spots', 'locs', 'bead_stack'],
-    outputs=['X', 'y', 'offsets_plot']
+    outputs=['training_stacks', 'X', 'y', 'offsets_plot']
 )

@@ -24,7 +24,8 @@ def get_spot_corner_coords(loc, spot_size):
 def extract_training_stacks(spots: np.array, bead_stack: np.array, parameters: Dict) -> np.array:
     picasso_params = parameters['picasso']
     spot_size = picasso_params['spot_size']
-    frame = bead_stack[20]
+    frame_idx = picasso_params['localised_frame']
+    frame = bead_stack[frame_idx]
     stacks = []
     if parameters['DEBUG']:
         spots = spots[0:3]
@@ -62,16 +63,18 @@ def norm_coordinates(locs: pd.DataFrame, parameters: np.array) -> pd.DataFrame:
 
     xy['y'] /= img_y
     xy['x'] /= img_x
+    # TODO remove in production
+    xy[['x', 'y']] = 0
     return xy
 
 
-def stacks_to_training_data(stacks: np.array, norm_coords: pd.DataFrame, offsets: np.array):
+def stacks_to_training_data(stacks: np.array, norm_coords: pd.DataFrame, offsets: np.array, parameters: Dict):
     psfs = []
     xy_coords = []
     z_coords = []
     for psf, xy_coord, offset in zip(stacks, norm_coords.to_dict(orient="records"), offsets):
         xy = np.repeat([[xy_coord['x'], xy_coord['y']]], psf.shape[0], axis=0)
-        z = (np.arange(0, psf.shape[0]) + offset) * 50
+        z = (np.arange(0, psf.shape[0]) + offset) * parameters['images']['train']['z_step']
         psfs.append(psf)
         xy_coords.append(xy)
         z_coords.append(z)

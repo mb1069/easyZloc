@@ -89,6 +89,10 @@ def train_classifier(X_train: Tuple[np.array, np.array], y_train: np.array, X_va
     batch_size = parameters['training']['batch_size']
     epochs = parameters['training']['max_epochs']
     model = get_model(parameters)
+    model = tf.keras.models.load_model('/home/miguel/Projects/uni/phd/smlm_z/smlm-z/data/06_models/warmstart_model')
+    from keras import backend as K
+    K.set_value(model.optimizer.learning_rate, parameters['training']['learning_rate'])
+    
     callbacks = [
         ReduceLROnPlateau(monitor='mean_absolute_error', factor=0.1,
                           patience=25, verbose=True, mode='min', min_delta=1, min_lr=1e-7,),

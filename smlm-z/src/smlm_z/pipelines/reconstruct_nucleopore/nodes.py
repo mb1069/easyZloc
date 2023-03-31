@@ -16,11 +16,15 @@ from ..train_model.nodes import create_boxplot
 def cluster_locs(df, parameters):
     np.random.seed(parameters['random_seed'])
     cluster_params = parameters['cluster_parameters']
-    coords = df[['x', 'y']].to_numpy() * parameters['images']['train']['xy_res']
+    coords = df[['x', 'y']].to_numpy() * parameters['images']['xy_res']
     cluster_ids = DBSCAN(
         eps=cluster_params['eps'], min_samples=cluster_params['min_count']).fit_predict(coords)
-    df['cluster_id'] = cluster_ids
-    return df
+    df['cluster_id'] = cluster_ids.astype(str)
+    ax = sns.scatterplot(data=df, x='x', y='y', hue='cluster_id')
+    # df.to_csv('tmp.csv', index=False)
+    # import os
+    # print(os.getcwd() + '/tmp.csv')
+    return df, ax.get_figure()
 
 
 def norm_exp_coordinates(locs: pd.DataFrame, parameters: np.array) -> pd.DataFrame:
@@ -35,6 +39,7 @@ def norm_exp_coordinates(locs: pd.DataFrame, parameters: np.array) -> pd.DataFra
 
 def predict_z(model, spots, df):
     coords = df[['x', 'y']].to_numpy()
+    coords[:] = 0
     z_pos = model.predict((spots, coords)).squeeze()
     return z_pos
 
@@ -46,14 +51,15 @@ def scatter_3d(xyz_coords, title=None):
     ax = fig.add_subplot(projection='3d')
 
     xs, ys, zs = xyz_coords[:, 0], xyz_coords[:, 1], xyz_coords[:, 2]
-    ax.scatter(xs, ys, zs, c=zs)
+    cmap = plt.get_cmap("coolwarm")
+    ax.scatter(xs, ys, zs, c=zs, cmap=cmap)
 
     if title:
         ax.set_title(title)
 
-    ax.set_xlabel('X Label')
-    ax.set_ylabel('Y Label')
-    ax.set_zlabel('Z Label')
+    ax.set_xlabel('X (nm)')
+    ax.set_ylabel('Y (nm)')
+    ax.set_zlabel('Z (nm)')
 
     return fig
 
@@ -110,6 +116,7 @@ def gm_min_bic(data):
 
     print(bics)
     print(f'Best EM: {best_gm.n_components}')
+    plt.title(f'Best EM: {best_gm.n_components}')
 
     return best_gm.means_[:, 0], fig
 
@@ -118,25 +125,31 @@ def apply_gm(data):
     data = data.reshape(-1, 1)
     return gm_min_bic(data)
 
-
-def recreate_sample(all_z_pos, locs):
+def recreate_sample(all_z_pos, locs, parameters):
     n_emitters = []
+    dists_within_clusters = []
+
     all_coords = []
     all_fit_figs = []
-    for cid in set(locs['cluster_id']):
+
+    for cid in sorted(set(locs['cluster_id'])):
         if cid == '-1':
             continue
         idx = np.argwhere(locs['cluster_id'].to_numpy() == cid).squeeze()
         coords = np.zeros((idx.shape[0], 2))
 
         preds = all_z_pos[idx]
+        # Useful to remove skew from gaussians
     #     preds -= preds.min()
     #     preds += 0.00000001
     #     preds = np.sqrt(preds)
         cluster_z_pos, fig = apply_gm(preds)
         all_fit_figs.append(fig)
-        n_emitters.append(len(cluster_z_pos))
-        x, y = locs.iloc[idx][['x', 'y']].mean(axis=0).to_numpy() * 106
+        diffs = np.diff(sorted(cluster_z_pos))
+        n_emitters.extend([len(cluster_z_pos)]*len(diffs))
+        dists_within_clusters.extend(diffs)
+
+        x, y = locs.iloc[idx][['x', 'y']].mean(axis=0).to_numpy() * parameters['images']['xy_res']
         coords = [[x, y, z, int(cid)] for z in cluster_z_pos]
         all_coords.extend(coords)
 
@@ -147,7 +160,10 @@ def recreate_sample(all_z_pos, locs):
     })
 
     fig_3d = scatter_3d(res[['x', 'y', 'z']].to_numpy())
-    return fig_3d, all_fit_figs
+
+    cluster_stats_fig = plt.figure()
+    plt.scatter(x=n_emitters, y=dists_within_clusters)
+    return fig_3d, all_fit_figs, cluster_stats_fig
 
 
 def check_exp_data(psfs, df):
