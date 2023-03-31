@@ -27,7 +27,7 @@ def create_pipeline(**kwargs) -> Pipeline:
         node(
             func=cluster_locs,
             inputs=['nanopore_locs', 'parameters'],
-            outputs='clustered_locs',
+            outputs=['clustered_locs', 'cluster_locs_fig'],
             name='cluster_locs',
             tags=['training', 'reconstruct']
         ),
@@ -54,12 +54,12 @@ def create_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func=recreate_sample,
-            inputs=['z_pos', 'clustered_locs'],
-            outputs=['nanopore_plot_3d', 'nanopore_gauss_model_fits'],
+            inputs=['z_pos', 'clustered_locs', 'parameters'],
+            outputs=['nanopore_plot_3d', 'nanopore_gauss_model_fits', 'cluster_stats_fig'],
             name='recreate_sample',
             tags=['training', 'reconstruct']
         )
     ],
     inputs=['model', 'nanopore_spots', 'nanopore_locs'],
-    outputs=['nanopore_plot_3d', 'nanopore_gauss_model_fits', 'exp_data_plots']
+    outputs=['nanopore_plot_3d', 'nanopore_gauss_model_fits', 'exp_data_plots', 'cluster_stats_fig', 'cluster_locs_fig']
     )

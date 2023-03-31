@@ -1,17 +1,17 @@
 
 picasso:
   spot_size: 31
-  localised_frame: 20
+  localised_frame: 100
 
 train_size: 0.8
 val_size: 0.1
 test_size: 0.1
 
 images:
+  xy_res: 90
   train:
     # in nm
-    z_step: 50
-    xy_res: 100
+    z_step: 10
     shape: [41, 512, 512]
   exp:
     shape: [64, 64]

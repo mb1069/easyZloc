@@ -138,6 +138,8 @@ def classic_align_psfs(psfs, df):
     ref_psf = prepare_psf(psfs[seed_psf])
     offsets = np.zeros((psfs.shape[0]))
 
+    # TODO remove 
+    return offsets
     ref_0 = get_peak_sharpness(psfs[seed_psf])
 
     for i in trange(1, psfs.shape[0]):
@@ -152,5 +154,7 @@ def classic_align_psfs(psfs, df):
             show_psf_axial(imgs, subsample_n=30)
 
     offsets -= ref_0
+
+    # TODO remove in prod
 
     return offsets

@@ -3,23 +3,55 @@
 # Documentation for this file format can be found in "The Data Catalog"
 # Link: https://kedro.readthedocs.io/en/stable/data/data_catalog.html
 
+# RIES dataset
+# bead_stack:
+#   type: smlm_z.extras.datasets.TiffDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks.ome.tif
+
+# spots:
+#   type: smlm_z.extras.datasets.SpotsDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_spots.hdf5
+#   key: spots
+
+# locs:
+#   type: pandas.HDFDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_locs.hdf5
+#   key: locs
+
+# nanopore_locs:
+#   type: pandas.HDFDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_locs.hdf5
+#   key: locs
+
+# nanopore_spots:
+#   type: smlm_z.extras.datasets.SpotsDataSet
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_spots.hdf5
+#   key: spots
+
+
+
+# Small ROI dataset
 bead_stack:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack.ome.tif
   type: smlm_z.extras.datasets.TiffDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks.ome.tif
-
-spots:
-  type: smlm_z.extras.datasets.SpotsDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_spots.hdf5
-  key: spots
-
 locs:
-  type: pandas.HDFDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/NPC-A647-3D-BEADS-as-stacks-kept-slice.ome_locs.hdf5
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_locs.hdf5
   key: locs
+  type: pandas.HDFDataSet
+nanopore_locs:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/nanopore/nanopore_locs.hdf5
+  key: locs
+  type: pandas.HDFDataSet
+nanopore_spots:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/nanopore/nanopore_spots.hdf5
+  key: spots
+  type: smlm_z.extras.datasets.SpotsDataSet
+spots:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_spots.hdf5
+  key: spots
+  type: smlm_z.extras.datasets.SpotsDataSet
 
-# calibration_yaml:
-#   type: yaml.YAMLDataSet
-#   filepath: /home/miguel/Projects/uni/data/smlm_3d/picasso_test/training/NPC-A647-3D-BEADS-as-stacks_spots.yaml
+
 
 norm_coords:
   type: pandas.CSVDataSet
@@ -27,7 +59,7 @@ norm_coords:
 
 training_stacks:
   type: smlm_z.extras.datasets.TiffDataSet
-  filepath: data/05_model_input/spots.tif
+  filepath: data/05_model_input/stacks.tif
 
 X:
   type: pickle.PickleDataSet
@@ -86,16 +118,6 @@ scatter_figures:
     save_args:
       format: png
 
-# nanopore_epfl_50nm_locs.hdf5
-nanopore_locs:
-  type: pandas.HDFDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_locs.hdf5
-  key: locs
-
-nanopore_spots:
-  type: smlm_z.extras.datasets.SpotsDataSet
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_spots.hdf5
-  key: spots
 
 z_pos:
   type: pickle.PickleDataSet
@@ -129,5 +151,21 @@ exp_data_plots:
   data_set:
     type: matplotlib.MatplotlibWriter
     filepath: data/05_model_input/exp_data_plots/
+    save_args:
+      format: png
+  
+cluster_stats_fig:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/cluster_stats_fig.png
+    save_args:
+      format: png
+
+cluster_locs_fig:
+  type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
+  data_set:
+    type: matplotlib.MatplotlibWriter
+    filepath: data/08_reporting/cluster_logs_fig.png
     save_args:
       format: png

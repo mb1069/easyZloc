@@ -6,5 +6,5 @@
 
 cluster_parameters:
   eps: 5
-  min_count: 50
+  min_count: 25
   
