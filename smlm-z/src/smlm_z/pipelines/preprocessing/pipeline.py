@@ -6,16 +6,11 @@ generated using Kedro 0.18.4
 from kedro.pipeline import Pipeline, node, pipeline
 
 from .nodes import extract_training_stacks, resize_stacks, norm_coordinates, align_stacks, stacks_to_training_data, norm_images, merge_model_inputs, trim_stacks
+from .model_psf import model_and_sim_beadstacks
+
 
 def create_pipeline(**kwargs) -> Pipeline:
     return pipeline([
-        node(
-            func=extract_training_stacks,
-            inputs=['spots', 'bead_stack', 'parameters'],
-            outputs='training_stacks',
-            name='extract_stacks',
-            tags=['training', 'inference']
-        ),
         node(
             func=norm_coordinates,
             inputs=['locs', 'parameters'],
@@ -24,10 +19,17 @@ def create_pipeline(**kwargs) -> Pipeline:
             tags=['training']
         ),
         node(
-            func=align_stacks,
-            inputs=['training_stacks', 'norm_coords', 'parameters'],
-            outputs=['offsets', 'offsets_plot'],
-            name='align_psfs',
+            func=model_and_sim_beadstacks,
+            inputs=['raw_stacks', 'params:psf_modelling_params'],
+            outputs='training_stacks',
+            name='model_psfs',
+            tags=['training'],
+        ),
+        node(
+            func=stacks_to_validation_data,
+            inputs=['raw_stacks', 'norm_coords', 'parameters'],
+            outputs=['val_psfs', 'val_xy_coords', 'val_z_coords'],
+            name='stacks_to_val_data',
             tags=['training']
         ),
         node(
@@ -66,6 +68,6 @@ def create_pipeline(**kwargs) -> Pipeline:
             tags=['training', 'inference']
         )
     ],
-    inputs=['spots', 'locs', 'bead_stack'],
+    inputs=['raw_stacks', 'locs'],
     outputs=['training_stacks', 'X', 'y', 'offsets_plot']
 )
