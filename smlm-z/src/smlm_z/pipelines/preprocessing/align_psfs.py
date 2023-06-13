@@ -133,28 +133,73 @@ def get_or_prepare_psf(prepped_psfs, raw_psfs, idx):
         prepped_psfs[idx] = prepare_psf(raw_psfs[idx])
     return prepped_psfs[idx]
 
+import numpy as np
+import scipy.optimize as opt
+import skimage.filters as filters
+
+
+
+def measure_psf_fwhm(psf):
+    def gaussian(x, amplitude, mean, stddev):
+        return amplitude * np.exp(-(x - mean) ** 2 / (2 * stddev ** 2))
+    # Normalize the PSF to range [0, 1]
+    psf_norm = (psf - np.min(psf)) / (np.max(psf) - np.min(psf))
+    
+    # Find the center of the PSF using the maximum intensity
+    center = np.unravel_index(np.argmax(psf_norm), psf_norm.shape)
+    # Extract a 1D slice of the PSF along the z-axis passing through the center
+    z_slice = psf_norm[:, center[0]]
+    
+    # Estimate the initial parameters of the Gaussian fit
+    amplitude = np.max(z_slice) - np.min(z_slice)
+    mean = center[0]
+    stddev = 2
+    
+    # Fit the Gaussian to the 1D slice using least squares optimization
+    try:
+        popt, _ = opt.curve_fit(gaussian, np.arange(z_slice.size), z_slice, p0=[amplitude, mean, stddev])
+    except RuntimeError:
+        return np.inf
+    # Compute the FWHM of the Gaussian fit
+    fwhm = 2 * np.sqrt(2 * np.log(2)) * popt[2]
+    
+    return fwhm
+
+def determine_best_focus_slice(psf):
+    # Measure the FWHM of the PSF for each z-slice
+    fwhm_values = []
+    for i in range(psf.shape[0]):
+        fwhm = measure_psf_fwhm(psf[i])
+        fwhm_values.append(fwhm)
+    
+    # Find the index of the z-slice with the minimum FWHM value
+    best_slice_idx = np.argmin(fwhm_values)
+    return best_slice_idx
+
+
+def fwhm_offsets(psfs):
+    idxs = np.array([determine_best_focus_slice(psf) for psf in psfs]).astype(float)
+    idxs -= np.mean(idxs)
+    return idxs
+
+
 def classic_align_psfs(psfs, df):
     seed_psf = find_seed_psf(df)
     ref_psf = prepare_psf(psfs[seed_psf])
     offsets = np.zeros((psfs.shape[0]))
 
-    # TODO remove 
-    return offsets
     ref_0 = get_peak_sharpness(psfs[seed_psf])
 
     for i in trange(1, psfs.shape[0]):
         psf = psfs[i]
         psf = prepare_psf(psf)
         psf = match_histograms(psf, ref_psf)
-        offset = tf_find_optimal_roll(ref_psf, psf)
-        offsets[i] = offset
+        offsets[i] = -tf_find_optimal_roll(ref_psf, psf)
         if DEBUG:
-            offset_psf = np.roll(psf, shift=-int(offset), axis=0)
+            offset_psf = np.roll(psf, shift=-int(offsets[i]), axis=0)
             imgs = np.concatenate((ref_psf, offset_psf), axis=2)
             show_psf_axial(imgs, subsample_n=30)
 
     offsets -= ref_0
-
-    # TODO remove in prod
 
     return offsets

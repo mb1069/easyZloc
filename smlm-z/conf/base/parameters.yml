@@ -1,18 +1,26 @@
 
-picasso:
-  spot_size: 31
-  localised_frame: 100
+# picasso:
+#   spot_size: 15
+#   localised_frame: 100
 
 train_size: 0.8
 val_size: 0.1
 test_size: 0.1
 
 images:
-  xy_res: 90
+  picasso_box: 31
+  xy_res: 110
+  magnification: 111.11
+  ill_NA: 1.4
+  det_NA: 1.3
+  n: 1.335
+  ill_wavelength: 635
+  det_wavelength: 635
   train:
     # in nm
-    z_step: 10
+    z_step: 20
     shape: [41, 512, 512]
+
   exp:
     shape: [64, 64]
 

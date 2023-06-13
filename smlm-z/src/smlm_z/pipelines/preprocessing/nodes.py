@@ -10,7 +10,7 @@ import pandas as pd
 from skimage.transform import resize
 import tensorflow as tf
 from skimage.feature import match_template
-from .align_psfs import classic_align_psfs
+from .align_psfs import classic_align_psfs, fwhm_offsets
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -42,9 +42,22 @@ def resize_stacks(stacks: np.array, target_shape: Dict) -> np.array:
     return stacks
 
 
+from .mask_psfs import mask_psf
+from .graph_align import ClassicAligner
+
 def align_stacks(bead_stacks: np.array, locs: pd.DataFrame, parameters: Dict):
-    offsets = classic_align_psfs(bead_stacks, locs)
+    # for i in range(bead_stacks.shape[0]):
+    #     bead_stacks[i] = mask_psf(bead_stacks[i])
+    # offsets = fwhm_offsets(bead_stacks)
+    # offsets = classic_align_psfs(bead_stacks, locs)
     # offsets = get_offsets(locs, bead_stacks)
+
+    # offsets = np.zeros((bead_stacks.shape[0]))
+    aligner = ClassicAligner(locs, bead_stacks, n_paths=10)
+    # TODO remove
+    offsets = np.zeros((bead_stacks.shape[0]))
+    # offsets = aligner.align_all()
+    
     fig = plt.figure()
     z_step = parameters['images']['train']['z_step']
     sns.scatterplot(data=locs, x='x', y='y', hue=(offsets - offsets.min()) * z_step)
@@ -63,8 +76,6 @@ def norm_coordinates(locs: pd.DataFrame, parameters: np.array) -> pd.DataFrame:
 
     xy['y'] /= img_y
     xy['x'] /= img_x
-    # TODO remove in production
-    xy[['x', 'y']] = 0
     return xy
 
 
