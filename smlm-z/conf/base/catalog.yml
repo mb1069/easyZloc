@@ -28,16 +28,19 @@
 #   filepath: /home/miguel/Projects/uni/data/smlm_3d/ries_nanopore/training-resized/grid/step_grid_spots.hdf5
 #   key: spots
 
-
-
 # Small ROI dataset
-bead_stack:
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack.ome.tif
-  type: smlm_z.extras.datasets.TiffDataSet
-locs:
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_locs.hdf5
-  key: locs
-  type: pandas.HDFDataSet
+# bead_stack:
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack.ome.tif
+#   type: smlm_z.extras.datasets.TiffDataSet
+# locs:
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_locs.hdf5
+#   key: locs
+#   type: pandas.HDFDataSet
+# spots:
+#   filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_spots.hdf5
+#   key: spots
+#   type: smlm_z.extras.datasets.SpotsDataSet
+
 nanopore_locs:
   filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/nanopore/nanopore_locs.hdf5
   key: locs
@@ -46,20 +49,23 @@ nanopore_spots:
   filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/nanopore/nanopore_spots.hdf5
   key: spots
   type: smlm_z.extras.datasets.SpotsDataSet
-spots:
-  filepath: /home/miguel/Projects/uni/data/smlm_3d/fake_bead_stack/bead_stack/bead_stack_slice.ome_spots.hdf5
-  key: spots
-  type: smlm_z.extras.datasets.SpotsDataSet
 
 
+training_stacks:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/20230331_beads/combined/stacks.ome.tif
+  # filepath: /home/miguel/Projects/uni/data/smlm_3d/20230331_beads_box15px/combined/stacks.ome.tif
+  type: smlm_z.extras.datasets.TiffDataSet
+
+locs:
+  filepath: /home/miguel/Projects/uni/data/smlm_3d/20230331_beads/combined/locs.hdf
+  # filepath: /home/miguel/Projects/uni/data/smlm_3d/20230331_beads_box15px/combined/locs.hdf
+  key: locs
+  type: pandas.HDFDataSet
 
 norm_coords:
   type: pandas.CSVDataSet
   filepath: data/05_model_input/coords.csv
 
-training_stacks:
-  type: smlm_z.extras.datasets.TiffDataSet
-  filepath: data/05_model_input/stacks.tif
 
 X:
   type: pickle.PickleDataSet
@@ -69,10 +75,22 @@ y:
   type: pickle.PickleDataSet
   filepath: data/05_model_input/y.pk
 
+norm_spots:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/norm_spots.pk
+
+
 model:
-  type: tensorflow.TensorFlowModelDataset
-  filepath: data/06_models/model
-  layer: model
+  type: pickle.PickleDataSet
+  filepath: data/06_models/model.pk
+  # type: tensorflow.TensorFlowModelDataset
+  # filepath: data/06_models/model.h5
+  # load_args:
+  #   compile: False
+  # save_args:
+  #   overwrite: True
+  #   include_optimizer: True
+  # layer: model
   
 training_plot:
   type: kedro_mlflow.io.artifacts.MlflowArtifactDataSet
@@ -169,3 +187,59 @@ cluster_locs_fig:
     filepath: data/08_reporting/cluster_logs_fig.png
     save_args:
       format: png
+
+X_train_aug:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_train_aug.pk
+
+y_train_aug:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_train_aug.pk
+
+X_test:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_test.pk
+
+y_test:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_test.pk
+
+X_val:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_val.pk
+
+y_val:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_val.pk
+
+X_train_aug_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_train_aug_norm.pk
+
+y_train_aug_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_train_aug_norm.pk
+
+X_test_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_test_norm.pk
+
+y_test_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_test_norm.pk
+
+X_val_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_val_norm.pk
+
+y_val_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/y_val_norm.pk
+
+X_norm:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/X_norm.pk
+
+data_splits:
+  type: pickle.PickleDataSet
+  filepath: data/05_model_input/data_splits.pk

@@ -199,14 +199,20 @@ def fake_psfs():
 
 
 class TrainingPicassoDataset(PicassoDataset):
-    def __init__(self, config, z_range=1000, raw_data_only=False, lazy=False, add_noise=True):
+    def __init__(self, config, z_range=1000, raw_data_only=False, lazy=False, add_noise=True, split_datasets=True):
         super().__init__(config)
+        # self.spots = self.spots[0:1]
+        # self.csv_data = self.csv_data.iloc[0:1]
+        # self.spots = np.concatenate([self.spots]*10)
+        # print(self.spots.shape)
+        # self.csv_data = pd.concat([self.csv_data]*10)
+        
+        self.split_datasets = split_datasets
         self.add_noise = add_noise
         self.z_range = z_range
         self.raw_data_only = raw_data_only
         self.img = imread(os.path.join(config['bpath'], config['img']))
         self.frame = imread(os.path.join(config['bpath'], config['frame']))
-        print(self.img.shape, self.frame.shape)
         assert self.img.shape[1:] == self.frame.shape
 
         if not lazy:
@@ -219,6 +225,7 @@ class TrainingPicassoDataset(PicassoDataset):
         if self.raw_data_only:
             self.data = (psfs, coords), zs
         else:
+
             self.data = self.split_data(psfs, coords, zs)
             if self.add_noise:
                 self.augment_with_noise()
@@ -324,18 +331,24 @@ class TrainingPicassoDataset(PicassoDataset):
         return psfs, coords, zs
 
     def split_data(self, psfs, coords, zs):
-        data = dict()
-        train_size = 0.7
-        val_size = 0.2
-        test_size = 0.1
+        data = {}
 
-        psf_train, psf_other, coords_train, coords_other, zs_train, zs_other = train_test_split(psfs, coords, zs, train_size=train_size, random_state=42)
+        if self.split_datasets:
+            train_size = 0.7
+            val_size = 0.2
+            test_size = 0.1
 
-        psf_val, psf_test, coords_val, coords_test, zs_val, zs_test = train_test_split(psf_other, coords_other, zs_other, train_size=val_size/(val_size+test_size), random_state=42)
+            psf_train, psf_other, coords_train, coords_other, zs_train, zs_other = train_test_split(psfs, coords, zs, train_size=train_size, random_state=42, stratify=zs)
 
-        data['train'] = [[psf_train, coords_train], zs_train]
-        data['val'] = [[psf_val, coords_val], zs_val]
-        data['test'] = [[psf_test, coords_test], zs_test]
+            psf_val, psf_test, coords_val, coords_test, zs_val, zs_test = train_test_split(psf_other, coords_other, zs_other, train_size=val_size/(val_size+test_size), random_state=42, stratify=zs_other)
+
+            data['train'] = [[psf_train, coords_train], zs_train]
+            data['val'] = [[psf_val, coords_val], zs_val]
+            data['test'] = [[psf_test, coords_test], zs_test]
+        else:
+            data['train'] = [[psfs, coords], zs]
+            data['val'] = [[psfs, coords], zs]
+            data['test'] = [[psfs, coords], zs]
         return data
 
     def slice_locs_to_stacks(self):
@@ -1099,12 +1112,6 @@ class StormDataset(ExperimentalDataSet):
         self.xyz_coords = xyz_coords
 
         print(f'Final: images {self.data[0].shape[0]} - DF: {self.csv_data.shape}')
-
-
-
-
-
-
 
     def fetch_all_emitters(self):
         all_psfs = []

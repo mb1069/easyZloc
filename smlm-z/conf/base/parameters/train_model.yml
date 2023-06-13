@@ -5,11 +5,11 @@
 # Link: https://kedro.readthedocs.io/en/0.18.4/kedro_project_setup/configuration.html#parameters
 
 training:
-  learning_rate: 1.e-3
-  batch_size: 128
+  learning_rate: 0.001
+  batch_size: 64
   max_epochs: 5000
-  aug_ratio: 3
+  aug_ratio: 10
 
 data_augmentation:
-  noise_std: 0.1
+  noise_std: 0.01
   max_lateral_translation_px: 1

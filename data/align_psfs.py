@@ -126,7 +126,7 @@ def pad_and_fit_spline(coords, psf, z, z_ups):
     return x, y, cs(z_ups)
     
 def upsample_psf(psf, ratio=UPSCALE_RATIO):
-    pad_width = 5
+    pad_width = 10
     z = np.arange(-pad_width, psf.shape[0] + pad_width)
     z_ups = np.arange(0, psf.shape[0], 1/ratio)
     upsampled_psf = np.zeros((z_ups.shape[0], *psf.shape[1:]))
@@ -236,6 +236,30 @@ def get_or_prepare_psf(prepped_psfs, raw_psfs, idx):
         prepped_psfs[idx] = prepare_psf(raw_psfs[idx])
     return prepped_psfs[idx]
 
+
+def debug_psfs(psf, ref_psf, offset):
+
+
+    ref_psf[:, :, 0] = np.max(ref_psf)
+    ref_psf[:, :, -1] = np.max(ref_psf)
+    ref_psf[:, 0, :] = np.max(ref_psf)
+    ref_psf[:, -1, :] = np.max(ref_psf)
+    ref_psf = ref_psf[::UPSCALE_RATIO]
+    psf = psf[::UPSCALE_RATIO]
+
+    z_ref = np.arange(0, ref_psf.shape[0])
+    z2 = z_ref - offset
+    zs = np.concatenate((z_ref, z2))
+    imgs = np.concatenate((ref_psf, psf))
+
+    idx = np.argsort(zs)
+    imgs = imgs[idx]
+    plt.imshow(grid_psfs(imgs))
+    plt.show()
+
+
+
+
 def align_psfs(psfs, df):
     print(f'Aligning {psfs.shape} psfs...')
 
@@ -249,8 +273,6 @@ def align_psfs(psfs, df):
     for i in trange(1, psfs.shape[0]):
         psf = psfs[i]
         psf = prepare_psf(psf)
-        print(psf.min(), psf.max())
-        print(ref_psf.min(), ref_psf.max())
         psf = match_histograms(psf, ref_psf)
         offset = tf_find_optimal_roll(ref_psf, psf)
         offsets[i] = offset
