@@ -4,11 +4,15 @@
 # In[1]:
 
 import sys, os
+import json
+
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 # os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-# os.environ["CUDA_VISIBLE_DEVICES"]="4,5"
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2"
+
+VERSION = '0.1'
 
 import argparse
 import numpy as np
@@ -45,9 +49,6 @@ import gc
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 
-DEBUG = False
-
-
 
 # stacks = './stacks.ome.tif'
 # locs = './locs.hdf'
@@ -60,7 +61,6 @@ def load_data(args):
     psfs = imread(args.stacks)[:, :, :, :, np.newaxis]
     locs = pd.read_hdf(args.locs, key='locs')
     locs['idx'] = np.arange(locs.shape[0])
-
     # idx = (xlim[0] < all_locs['x']) & (all_locs['x'] < xlim[1]) & (ylim[0] < all_locs['y']) & (all_locs['y'] < ylim[1])
     # locs = all_locs[idx]
     # psfs = all_psfs[locs['idx']]
@@ -84,7 +84,7 @@ def load_data(args):
     return psfs, locs, ys
 
 
-def stratify_data(locs):
+def stratify_data(locs, args):
     def cart2pol(xy):
         x, y = xy
         rho = np.sqrt(x**2 + y**2)
@@ -103,7 +103,7 @@ def stratify_data(locs):
     idx = np.argwhere(polar_coords[:, 0] <= center_radius).squeeze()
     groups[idx] = -1
 
-    if DEBUG:
+    if args.debug:
         groups[:] = 0
     locs['group'] = groups
 
@@ -328,7 +328,7 @@ def get_model():
    return model
 
 def train_model(train_data, val_data, args):
-    epochs = 10 if args.debug else 5000
+    epochs = 3 if args.debug else 5000
     lr = 0.0001
     print(f'N epochs: {epochs}')
 
@@ -407,6 +407,9 @@ def write_report(model, train_data, val_data, test_data, args):
     # Check output on all stacks
 
     tbl_data = []
+    report_data = {
+        'code_version': VERSION
+    }
 
     for dirname, ds in [('train', train_data), ('val', val_data), ('test', test_data)]:
         os.makedirs(os.path.join(args.outdir, 'results', dirname), exist_ok=True)
@@ -423,6 +426,8 @@ def write_report(model, train_data, val_data, test_data, args):
         z = np.concatenate(z)
 
         preds = model.predict(ds, batch_size=N_GPUS * 4096).squeeze()
+
+        report_data[dirname+'_mae'] = float(mean_absolute_error(preds.squeeze(), z.squeeze()))
 
         fname = f'{dirname}_all_preds'
         plt.figure(figsize=(12, 10), dpi=80)
@@ -459,10 +464,10 @@ def write_report(model, train_data, val_data, test_data, args):
             ax1.set_title(f'MAE: {mae}nm')
 
             
-            ax2.imshow(grid_psfs(group_images.mean(axis=-1)))
+            ax2.imshow(grid_psfs(group_images.mean(axis=-1)).T)
             ax2.set_title('Ordered by frame')
 
-            ax3.imshow(grid_psfs(group_images[np.argsort(error)].mean(axis=-1)))
+            ax3.imshow(grid_psfs(group_images[np.argsort(error)].mean(axis=-1)).T)
             ax3.set_title('Ordered by increasing prediction error')
             ax3.set_xlabel(f'min error: {str(round(min(error), 2))}, max error: {str(round(max(error), 2))}')
 
@@ -496,9 +501,16 @@ def write_report(model, train_data, val_data, test_data, args):
     df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'min_error', 'max_error', 'offset'])
     df.to_csv(os.path.join(args.outdir, 'results', 'results.csv'))
 
+
+
+    with open(os.path.join(args.outdir, 'results', 'report.json'), 'w') as fp:
+        json_dumps_str = json.dumps(report_data, indent=4)
+        print(json_dumps_str, file=fp)
+
+
 def main(args):
     stacks, locs, zs = load_data(args)
-    locs = stratify_data(locs)
+    locs = stratify_data(locs, args)
     train, val, test = split_train_val_test(stacks, locs, zs)
     (X_train, y_train), (X_val, y_val), (X_test, y_test) = filter_zranges(train, val, test, args)
 
@@ -545,7 +557,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
-    parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf5')
+    parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
     parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
     parser.add_argument('-zrange', '--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
     # parser.add_argument('-m', '--pretrained-model', help='Start training from existing model (path)')
@@ -557,9 +569,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     if not args.outdir:
-        args.outdir = os.path.dirname('.')
+        args.outdir = os.path.dirname('./out')
     os.makedirs(args.outdir, exist_ok=True)
 
     if not args.batch_size:
-        args.batch_size = 512 * N_GPUS
+        args.batch_size = 768 * N_GPUS
     main(args)
