@@ -44,6 +44,8 @@ def transform_args(args):
     args['outpath'] = args['bead_stacks']
     fnames = [os.path.abspath(f) for f in fnames if '_slice.ome.tif' not in f and os.path.basename(f) != 'stacks.ome.tif']
     args['bead_stacks'] = fnames
+
+    args['gaussian_blur'] = list(map(int, args['gaussian_blur'].split(',')))
     return args
 
 def get_or_create_slice(bead_stack, slice_path):
@@ -192,7 +194,7 @@ def est_bead_offsets(psfs, locs, args):
 
     def denoise(img):
         
-        sigmas = np.array([2, 1, 1])
+        sigmas = np.array(args['gaussian_blur'])
         return gaussian_filter(img.copy(), sigma=sigmas)
 
     def get_sharpness(array):
@@ -289,8 +291,7 @@ def main(args):
 
 
 
-
-if __name__ == '__main__':
+def parse_args():
     parser = ArgumentParser(description='')
     parser.add_argument('bead_stacks', help='Path to TIFF bead stacks / directory containing bead stacks.')
     parser.add_argument('-z', '--z_step', help='Pixel size (nm)', default=10, type=int)
@@ -304,10 +305,16 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--fit-method', help='Fit method', choices=['mle', 'lq', 'avg'])
     parser.add_argument('--regen', action='store_true')
     parser.add_argument('-snr', '--min-snr', type=float, default=2.0)
+    parser.add_argument('-gb', '--gaussian-blur', default='3,2,2', help='Gaussian pixel-blur in Z/Y/X for bead offset estimation')
     parser.add_argument('--debug', action='store_true')
 
     args = vars(parser.parse_args())
+    return args
 
+
+if __name__ == '__main__':
+    args = parse_args()
+    print(args)
     test_picasso_exec()
     args = transform_args(args)
     validate_args(args)

@@ -553,25 +553,28 @@ def main(args):
     model = train_model(train_data, val_data, args)
     write_report(model, train_data, val_data, test_data, args)
 
-
-if __name__ == '__main__':
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
     parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
     parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
     parser.add_argument('-zrange', '--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
     # parser.add_argument('-m', '--pretrained-model', help='Start training from existing model (path)')
-    parser.add_argument('-o', '--outdir', help='Output directory')
+    parser.add_argument('-o', '--outdir', help='Output directory', default='./out')
 
     parser.add_argument('--debug', action='store_true', help='Start training from model')
     parser.add_argument('--seed', default=42, type=int, help='Random seed (for consistent results)')
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)')
 
     args = parser.parse_args()
-    if not args.outdir:
-        args.outdir = os.path.dirname('./out')
-    os.makedirs(args.outdir, exist_ok=True)
+    return args
 
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    os.makedirs(args.outdir, exist_ok=True)
     if not args.batch_size:
         args.batch_size = 768 * N_GPUS
+
     main(args)
