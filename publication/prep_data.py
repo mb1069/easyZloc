@@ -12,13 +12,15 @@ from skimage.feature import match_template
 from skimage.filters import butterworth
 from skimage.filters import gaussian
 import matplotlib.pyplot as plt
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from scipy.optimize import curve_fit
 from scipy.special import erf
 from sklearn.metrics import mean_squared_error
 from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import gaussian_filter
 import json
+import shutil
+from util.util import grid_psfs
 
 def norm_zero_one(s):
     max_s = s.max()
@@ -144,19 +146,18 @@ def filter_mse(psf, args):
         return A * np.exp(-(x - x0)**2 / (2 * sigma**2)) * (1 + erf(alpha * (x - x0))) + offset
 
 
-    max_mse = 0.2
     # Fit the skewed Gaussian to the data
     x_data = np.arange(psf.shape[0]) * z_step
     y_data = psf.max(axis=(1,2))
     y_data = norm_zero_one(y_data)
-    initial_guess = [1, psf.shape[0] * z_step //2, psf.shape[0] * z_step/4, 0.0, np.median(y_data)]
+    initial_guess = [1, psf.shape[0] * z_step / 2, psf.shape[0] * z_step/4, 0.0, np.median(y_data)]
 
     bounds = [
         (0.6, 1.2),
         (psf.shape[0] * z_step/8, psf.shape[0] * z_step),
-        (psf.shape[0] * z_step/10, psf.shape[0] * z_step/4),
+        (psf.shape[0] * z_step/20, psf.shape[0] * z_step/4),
         (-np.inf, np.inf),
-        (y_data.min(), np.inf)
+        (y_data.min(), y_data.max())
     ]
     try:
         params, _ = curve_fit(skewed_gaussian, x_data, y_data, p0=initial_guess, bounds=list(zip(*bounds)))
@@ -166,8 +167,13 @@ def filter_mse(psf, args):
 
     y_fit = skewed_gaussian(x_data, *params)
 
-    mse = mean_squared_error(y_fit, y_data)
-    return mse < max_mse
+    mse = (y_fit - y_data) ** 2
+    avg_mse = np.mean(mse)
+    max_mse = np.max(mse)
+
+    permitted_avg_mse = 0.01
+    permitted_max_mse = 0.15
+    return avg_mse < permitted_avg_mse and max_mse < permitted_max_mse
         
 
 def filter_beads(spots, locs, stacks, args):
@@ -177,7 +183,7 @@ def filter_beads(spots, locs, stacks, args):
     fwhms = np.array([has_fwhm(psf, args) for psf in stacks])
     mse_filters = np.array([filter_mse(psf, args) for psf in stacks])
 
-    idx = np.argwhere(snrs & fwhms * mse_filters).squeeze()
+    idx = np.argwhere(snrs & fwhms & mse_filters).squeeze()
 
     spots = spots[idx]
     locs = locs.iloc[idx]
@@ -266,6 +272,48 @@ def write_combined_data(stacks, locs, args):
     print(f'\t{stacks_config_outpath}')
     print(f'Total beads: {locs.shape[0]}')
 
+def write_stack_figures(stacks, locs, args):
+    outpath = os.path.join(args['outpath'], 'combined', 'debug')
+    if os.path.exists(outpath):
+        shutil.rmtree(outpath)
+    os.makedirs(outpath, exist_ok=False)
+
+    for i in trange(stacks.shape[0]):
+        stack = stacks[i]
+        loc = locs.iloc[i].to_dict()
+
+        fig = plt.figure(layout="constrained", figsize=(20, 15), dpi=80)
+        gs = plt.GridSpec(2, 3, figure=fig)
+        ax1 = fig.add_subplot(gs[0:, 0])
+        ax2 = fig.add_subplot(gs[0, 1:])
+        ax3 = fig.add_subplot(gs[1, 1:])
+
+
+        fig.suptitle(f'Bead: {i}')
+
+        ax1.imshow(grid_psfs(stack, cols=20))
+        ax1.set_title('Ordered by frame')
+
+        intensity = stack.max(axis=(1,2))
+        min_val = min(intensity)
+        max_val = max(intensity)
+        ax2.plot(intensity)
+        ax2.vlines(loc['offset']/args['zstep'], min_val, max_val, colors='orange')
+        ax2.set_title('Max normalised pixel intensity over z')
+        ax2.set_xlabel('z (frame)')
+        ax2.set_ylabel('pixel intensity')    
+
+
+        for k, v in loc.items():
+            if isinstance(v, float):
+                loc[k] = round(v, 5)
+        text = json.dumps(loc, indent=4)
+        ax3.axis((0, 10, 0, 10))
+        ax3.text(0,0, text, fontsize=18)
+    
+        plt.savefig(os.path.join(outpath, f'bead_{i}.png'))
+        plt.close()
+
 
 def main(args):
     all_stacks = []
@@ -297,6 +345,9 @@ def main(args):
     stacks, locs = est_bead_offsets(stacks, locs, args)
 
     write_combined_data(stacks, locs, args)
+
+    if args['debug']:
+        write_stack_figures(stacks, locs, args)
         
 
 
