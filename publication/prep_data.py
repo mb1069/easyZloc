@@ -18,7 +18,7 @@ from scipy.special import erf
 from sklearn.metrics import mean_squared_error
 from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import gaussian_filter
-
+import json
 
 def norm_zero_one(s):
     max_s = s.max()
@@ -130,7 +130,7 @@ def has_fwhm(psf, args):
 
 
 def filter_mse(psf, args):
-    z_step = args['z_step']
+    z_step = args['zstep']
 
     # Define the skewed Gaussian function
     def skewed_gaussian(x, A, x0, sigma, alpha, offset):
@@ -209,14 +209,14 @@ def est_bead_offsets(psfs, locs, args):
     def find_peak(i, psf):
         if psf.ndim == 4:
             psf = psf.mean(axis=-1)
-        x = np.arange(psf.shape[0]) * args['z_step']
+        x = np.arange(psf.shape[0]) * args['zstep']
         psf = denoise(psf)
         
         inten = norm_zero_one(reduce_img(psf))
 
         cs = UnivariateSpline(x, inten, k=3, s=0.2)
 
-        x_ups = np.linspace(0, psf.shape[0], len(x) * UPSCALE_RATIO) * args['z_step']
+        x_ups = np.linspace(0, psf.shape[0], len(x) * UPSCALE_RATIO) * args['zstep']
 
         peak_xups = x_ups[np.argmax(cs(x_ups))] 
 
@@ -251,9 +251,19 @@ def write_combined_data(stacks, locs, args):
 
     imwrite(stacks_outpath, stacks)
     locs.to_hdf(locs_outpath, key='locs')
+
+    stacks_config = {
+        'zstep': args['zstep']
+    }
+    stacks_config_outpath = os.path.join(outpath, 'stacks_config.json')
+    with open(stacks_config_outpath, 'w') as fp:
+        json_dumps_str = json.dumps(stacks_config, indent=4)
+        print(json_dumps_str, file=fp)
+
     print('Saved results to:')
     print(f'\t{locs_outpath}')
     print(f'\t{stacks_outpath}')
+    print(f'\t{stacks_config_outpath}')
     print(f'Total beads: {locs.shape[0]}')
 
 
@@ -294,7 +304,7 @@ def main(args):
 def parse_args():
     parser = ArgumentParser(description='')
     parser.add_argument('bead_stacks', help='Path to TIFF bead stacks / directory containing bead stacks.')
-    parser.add_argument('-z', '--z_step', help='Pixel size (nm)', default=10, type=int)
+    parser.add_argument('-z', '--zstep', help='Pixel size (nm)', default=20, type=int)
     parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', default=86, type=int)
     parser.add_argument('-g', '--gradient', help='Min. net gradient', default=1000, type=int)
     parser.add_argument('-b', '--box-size-length', help='Box size', default=15, type=int)

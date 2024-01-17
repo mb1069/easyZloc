@@ -10,7 +10,6 @@ cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 # os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2"
 
 VERSION = '0.1'
 
@@ -58,8 +57,8 @@ N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 def load_data(args):
 
-    psfs = imread(args.stacks)[:, :, :, :, np.newaxis]
-    locs = pd.read_hdf(args.locs, key='locs')
+    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis]
+    locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
     # idx = (xlim[0] < all_locs['x']) & (all_locs['x'] < xlim[1]) & (ylim[0] < all_locs['y']) & (all_locs['y'] < ylim[1])
     # locs = all_locs[idx]
@@ -67,12 +66,12 @@ def load_data(args):
 
     ys = []
     for offset in locs['offset']:
-        zs = ((np.arange(psfs.shape[1])) * args.zstep) - offset
+        zs = ((np.arange(psfs.shape[1])) * args['zstep']) - offset
         ys.append(zs)
 
     ys = np.array(ys)
 
-    if args.debug:
+    if args['debug']:
         idx = np.arange(psfs.shape[0])
         np.random.seed(42)
         idx = np.random.choice(idx, 2000)
@@ -103,7 +102,7 @@ def stratify_data(locs, args):
     idx = np.argwhere(polar_coords[:, 0] <= center_radius).squeeze()
     groups[idx] = -1
 
-    if args.debug:
+    if args['debug']:
         groups[:] = 0
     locs['group'] = groups
 
@@ -117,7 +116,7 @@ def split_train_val_test(psfs, locs, ys):
 
     idx = np.arange(psfs.shape[0])
 
-    train_idx, test_idx = train_test_split(idx, train_size=0.9, random_state=args.seed, stratify=locs['group'])
+    train_idx, test_idx = train_test_split(idx, train_size=0.9, random_state=args['seed'], stratify=locs['group'])
 
     _train_val_psfs = psfs[train_idx]
     test_psfs = psfs[test_idx]
@@ -144,7 +143,7 @@ def split_train_val_test(psfs, locs, ys):
     train_val_ys = np.concatenate(_train_val_ys)
     split_idx = np.arange(train_val_psfs.shape[0])
 
-    train_idx, val_idx = train_test_split(split_idx, train_size=0.9, random_state=args.seed, stratify=groups)
+    train_idx, val_idx = train_test_split(split_idx, train_size=0.9, random_state=args['seed'], stratify=groups)
 
     train_psfs = train_val_psfs[train_idx]
     train_ys = train_val_ys[train_idx][:, np.newaxis]
@@ -173,7 +172,7 @@ def filter_zranges(train_data, val_data, test_data, args):
 
     def filter_zrange(X, zs):
         psfs, groups = X
-        valid_ids = np.argwhere(abs(zs.squeeze()) < args.zrange).squeeze()
+        valid_ids = np.argwhere(abs(zs.squeeze()) < args['zrange']).squeeze()
         return [psfs[valid_ids], groups[valid_ids]], zs[valid_ids]
     
     
@@ -193,9 +192,9 @@ def aug_train_data(X_train, y_train, args):
     img_size = X_train[0].shape[1]
 
     aug_pipeline = Sequential([
-        layers.GaussianNoise(stddev=MAX_GAUSS_NOISE*X_train[0].max(), seed=args.seed),
-        layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args.seed),
-        layers.RandomBrightness([-0.2, 0.2], [X_train[0].min(), X_train[0].max()], seed=args.seed),
+        layers.GaussianNoise(stddev=MAX_GAUSS_NOISE*X_train[0].max(), seed=args['seed']),
+        layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
+        layers.RandomBrightness([-0.2, 0.2], [X_train[0].min(), X_train[0].max()], seed=args['seed']),
     ])
     
     idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
@@ -237,7 +236,7 @@ def norm_images(X_train, X_val, X_test, args):
     X_val[0] = datagen.standardize(X_val[0].astype(float))
     X_test[0] = datagen.standardize(X_test[0].astype(float))
 
-    outpath = os.path.join(args.outdir, 'datagen.gz')
+    outpath = os.path.join(args['outdir'], 'datagen.gz')
     joblib.dump(datagen, outpath)
 
     return X_train, X_val, X_test
@@ -249,7 +248,7 @@ def norm_xy_coords(X_train, X_val, X_test):
     X_val[1] = scaler.transform(X_val[1])
     X_test[1] = scaler.transform(X_test[1])
 
-    outpath = os.path.join(args.outdir, 'scaler.save')
+    outpath = os.path.join(args['outdir'], 'scaler.save')
     joblib.dump(scaler, outpath) 
 
     return X_train, X_val, X_test
@@ -290,7 +289,7 @@ def prep_tf_dataset(dataset):
     return dataset.cache().prefetch(tf.data.AUTOTUNE)
 
 def save_dataset(dataset, name, args):
-    dataset.save(os.path.join(args.outdir, name))
+    dataset.save(os.path.join(args['outdir'], name))
 
 # Vision transformer training
 
@@ -328,7 +327,7 @@ def get_model():
    return model
 
 def train_model(train_data, val_data, args):
-    epochs = 3 if args.debug else 5000
+    epochs = 3 if args['debug'] else 5000
     lr = 0.0001
     print(f'N epochs: {epochs}')
 
@@ -370,7 +369,7 @@ def train_model(train_data, val_data, args):
     history = model.fit(train_data, epochs=epochs, validation_data=val_data, callbacks=callbacks, shuffle=True, verbose=True)
 
 
-    model.save(os.path.join(args.outdir, './latest_vit_model3'))
+    model.save(os.path.join(args['outdir'], './latest_vit_model3'))
 
     print('Finished!')
 
@@ -384,7 +383,7 @@ def train_model(train_data, val_data, args):
     ax2 = ax1.twinx()
     ax2.plot(history.history['lr'], label='lr', color='red')
     ax2.legend(loc=0)
-    fig.savefig(os.path.join(args.outdir, 'training_curve.png'))
+    fig.savefig(os.path.join(args['outdir'], 'training_curve.png'))
 
     return model
 
@@ -412,7 +411,7 @@ def write_report(model, train_data, val_data, test_data, args):
     }
 
     for dirname, ds in [('train', train_data), ('val', val_data), ('test', test_data)]:
-        os.makedirs(os.path.join(args.outdir, 'results', dirname), exist_ok=True)
+        os.makedirs(os.path.join(args['outdir'], 'results', dirname), exist_ok=True)
         images = []
         coords = []
         z = []
@@ -433,7 +432,7 @@ def write_report(model, train_data, val_data, test_data, args):
         plt.figure(figsize=(12, 10), dpi=80)
         plt.title(fname)
         plt.scatter(z, preds)
-        plt.savefig(os.path.join(args.outdir, 'results', dirname, fname) + '.png')
+        plt.savefig(os.path.join(args['outdir'], 'results', dirname, fname) + '.png')
 
         coords2 = ['_'.join(x.astype(str)) for x in coords]
 
@@ -484,7 +483,7 @@ def write_report(model, train_data, val_data, test_data, args):
             ax5.set_xlabel('z (frame)')
             ax5.set_ylabel('pixel intensity')    
                 
-            plt.savefig(os.path.join(args.outdir, 'results', dirname, f'{dirname}_bead') + f'_{num}.png')
+            plt.savefig(os.path.join(args['outdir'], 'results', dirname, f'{dirname}_bead') + f'_{num}.png')
             plt.close()
 
             if dirname == 'test':
@@ -499,11 +498,11 @@ def write_report(model, train_data, val_data, test_data, args):
             tbl_data.append((dirname, num,  gcoords[0][0], gcoords[1][0], mae, min(error), max(error),offset))
 
     df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'min_error', 'max_error', 'offset'])
-    df.to_csv(os.path.join(args.outdir, 'results', 'results.csv'))
+    df.to_csv(os.path.join(args['outdir'], 'results', 'results.csv'))
 
 
 
-    with open(os.path.join(args.outdir, 'results', 'report.json'), 'w') as fp:
+    with open(os.path.join(args['outdir'], 'results', 'report.json'), 'w') as fp:
         json_dumps_str = json.dumps(report_data, indent=4)
         print(json_dumps_str, file=fp)
 
@@ -532,9 +531,9 @@ def main(args):
     print(X_test[0].shape, X_test[1].shape)
 
 
-    train_data = get_dataset(X_train, y_train, args.batch_size, True)
-    val_data = get_dataset(X_val, y_val, args.batch_size)
-    test_data = get_dataset(X_test, y_test, args.batch_size)
+    train_data = get_dataset(X_train, y_train, args['batch_size'], True)
+    val_data = get_dataset(X_val, y_val, args['batch_size'])
+    test_data = get_dataset(X_test, y_test, args['batch_size'])
 
     train_data = apply_rescaling(train_data)
     val_data = apply_rescaling(val_data)
@@ -557,7 +556,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
     parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
-    parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
+    parser.add_argument('-sc', '--stacks-config', help='JSON config file for stacks file (can be automatically found if in same dir)', default='./stacks_config.json')
+    # parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
     parser.add_argument('-zrange', '--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
     # parser.add_argument('-m', '--pretrained-model', help='Start training from existing model (path)')
     parser.add_argument('-o', '--outdir', help='Output directory', default='./out')
@@ -566,15 +566,27 @@ def parse_args():
     parser.add_argument('--seed', default=42, type=int, help='Random seed (for consistent results)')
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)')
 
-    args = parser.parse_args()
+    args = vars(parser.parse_args())
+
+    if not os.path.exists(args['stacks_config']):
+        print(f'Could not find stacks-config file, checking in dir of stacks...')
+        args['stacks-config'] = os.path.join(os.path.dirname(args['stacks']), 'stacks_config.json')
+        if not os.path.exists(args['stacks_config']):
+            print(f'Could not find stacks-config file')
+            quit(1)
+
+    with open(args['stacks_config']) as f:
+        d = json.load(f)
+    args.update(d)
+    print(args)
     return args
 
 
 if __name__ == '__main__':
     args = parse_args()
 
-    os.makedirs(args.outdir, exist_ok=True)
-    if not args.batch_size:
-        args.batch_size = 768 * N_GPUS
+    os.makedirs(args['outdir'], exist_ok=True)
+    if not args['batch_size']:
+        args['batch_size'] = 768 * N_GPUS
 
     main(args)
