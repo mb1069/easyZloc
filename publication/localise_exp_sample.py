@@ -67,12 +67,14 @@ def gen_2d_plot(locs, outdir):
     plt.axis('equal')
     plt.gca().invert_yaxis()
     plt.savefig(os.path.join(outdir, '2d_scatterplot.png'))
+    plt.close()
 
 
 def gen_example_spots(spots, outdir):
     plt.rcParams['figure.figsize'] = [10, 10]
     plt.imshow(grid_psfs(spots[0:100]))
     plt.savefig(os.path.join(outdir, 'example_spots.png'))
+    plt.close()
 
 
 def apply_preprocessing(locs, spots, args):
@@ -116,6 +118,7 @@ def pred_z(model, spots, coords, outdir):
 
     sns.histplot(pred_z)
     plt.savefig(os.path.join(outdir, 'z_histplot.png'))
+    plt.close()
     return pred_z
 
 def write_locs(locs, z_coords, args):
