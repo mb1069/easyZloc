@@ -5,13 +5,15 @@
 
 import sys, os
 import json
+import shutil
 
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 # os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 
-VERSION = '0.1'
+VERSION = '0.13'
+CHANGE_NOTES = 'Reduced brightness range, increased n aug'
 
 import argparse
 import numpy as np
@@ -186,15 +188,15 @@ def filter_zranges(train_data, val_data, test_data, args):
 
 def aug_train_data(X_train, y_train, args):
     X_train[0] = X_train[0].astype(float)
-    AUG_RATIO = 2
-    MAX_TRANSLATION_PX = 2
+    AUG_RATIO = 4
+    MAX_TRANSLATION_PX = 1
     MAX_GAUSS_NOISE = 0.005
     img_size = X_train[0].shape[1]
 
     aug_pipeline = Sequential([
         layers.GaussianNoise(stddev=MAX_GAUSS_NOISE*X_train[0].max(), seed=args['seed']),
         layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
-        layers.RandomBrightness([-0.2, 0.2], [X_train[0].min(), X_train[0].max()], seed=args['seed']),
+        layers.RandomBrightness([-0.05, 0.05], [X_train[0].min(), X_train[0].max()], seed=args['seed']),
     ])
     
     idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
@@ -361,29 +363,32 @@ def train_model(train_data, val_data, args):
 
     callbacks = [
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
-                        patience=25, verbose=True, mode='min', min_delta=5, min_lr=1e-6,),
+                        patience=25, verbose=True, mode='min', min_delta=1, min_lr=1e-6,),
         EarlyStopping(monitor='val_mean_absolute_error', patience=50,
                     verbose=True, min_delta=1, restore_best_weights=True),
     ]
 
-    history = model.fit(train_data, epochs=epochs, validation_data=val_data, callbacks=callbacks, shuffle=True, verbose=True)
-
+    try:
+        history = model.fit(train_data, epochs=epochs, validation_data=val_data, callbacks=callbacks, shuffle=True, verbose=True)
+    except KeyboardInterrupt:
+        print('Interrupted training')
+        history = None
 
     model.save(os.path.join(args['outdir'], './latest_vit_model3'))
 
     print('Finished!')
 
-
-    plt.rcParams['figure.figsize'] = [10, 10]
-    fig, ax1 = plt.subplots()
-    ax1.plot(history.history['mean_absolute_error'], label='mse')
-    ax1.plot(history.history['val_mean_absolute_error'], label='val_mse')
-    ax1.set_ylim([0, 500])
-    ax1.legend(loc=1)
-    ax2 = ax1.twinx()
-    ax2.plot(history.history['lr'], label='lr', color='red')
-    ax2.legend(loc=0)
-    fig.savefig(os.path.join(args['outdir'], 'training_curve.png'))
+    if history:
+        plt.rcParams['figure.figsize'] = [10, 10]
+        fig, ax1 = plt.subplots()
+        ax1.plot(history.history['mean_absolute_error'], label='mse')
+        ax1.plot(history.history['val_mean_absolute_error'], label='val_mse')
+        ax1.set_ylim([0, 500])
+        ax1.legend(loc=1)
+        ax2 = ax1.twinx()
+        ax2.plot(history.history['lr'], label='lr', color='red')
+        ax2.legend(loc=0)
+        fig.savefig(os.path.join(args['outdir'], 'training_curve.png'))
 
     return model
 
@@ -407,7 +412,8 @@ def write_report(model, train_data, val_data, test_data, args):
 
     tbl_data = []
     report_data = {
-        'code_version': VERSION
+        'code_version': VERSION,
+        'change_notes': CHANGE_NOTES
     }
 
     for dirname, ds in [('train', train_data), ('val', val_data), ('test', test_data)]:
@@ -507,6 +513,11 @@ def write_report(model, train_data, val_data, test_data, args):
         print(json_dumps_str, file=fp)
 
 
+def save_copy_training_script(outdir):
+    outpath = os.path.join(outdir, 'train_model.py.bak')
+    shutil.copy(os.path.abspath(__file__), outpath)
+
+
 def main(args):
     stacks, locs, zs = load_data(args)
     locs = stratify_data(locs, args)
@@ -549,8 +560,12 @@ def main(args):
 
     save_dataset(train_data, 'train', args)
 
+
     model = train_model(train_data, val_data, args)
     write_report(model, train_data, val_data, test_data, args)
+
+    print('Output in:', args['outdir'])
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -562,7 +577,7 @@ def parse_args():
     # parser.add_argument('-m', '--pretrained-model', help='Start training from existing model (path)')
     parser.add_argument('-o', '--outdir', help='Output directory', default='./out')
 
-    parser.add_argument('--debug', action='store_true', help='Start training from model')
+    parser.add_argument('--debug', action='store_true', help='Train on subset of data for fewer iterations')
     parser.add_argument('--seed', default=42, type=int, help='Random seed (for consistent results)')
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)')
 
@@ -586,7 +601,10 @@ if __name__ == '__main__':
     args = parse_args()
 
     os.makedirs(args['outdir'], exist_ok=True)
+
+    save_copy_training_script(args['outdir'])
+
     if not args['batch_size']:
-        args['batch_size'] = 768 * N_GPUS
+        args['batch_size'] = 512 * N_GPUS
 
     main(args)
