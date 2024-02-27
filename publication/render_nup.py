@@ -56,6 +56,8 @@ assert info[1]['Pixelsize'] == PIXEL_SIZE
 locs = new_locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
 locs['clusterID'] = locs['group']
 
+locs['lpx'] = 0.1
+locs['lpy'] = 0.1
 # out_locs = '/home/miguel/Projects/data/results/vit_031_nup/out_nup/locs_3d_grouped.hdf5'
 # locs.to_hdf(out_locs, key='locs')
 
@@ -79,7 +81,7 @@ z_min = 400
 z_max = 600
 min_log_likelihood = -100
 # min_kde = np.log(0.007)
-min_kde = 0.01
+min_kde = 0.05
 
 def filter_locs(l):
     n_points = l.shape[0]
@@ -193,8 +195,8 @@ MIN_BLUR=0.001
 records = []
 for cid in set(locs['clusterID']):
     print('Cluster ID', cid)
-    # if cid != 10:
-    #     continue
+    if cid != 23:
+        continue
     cluster_locs = locs[locs['clusterID']==cid]
     cluster_locs = filter_locs(cluster_locs)
 
@@ -270,7 +272,8 @@ for cid in set(locs['clusterID']):
     if color_by_depth:
         img = apply_cmap_img(img, cmap_min_z, cmap_max_z, cluster_locs['z [nm]'].min(), cluster_locs['z [nm]'].max(), brightness_factor=0.75)
                         
-    ax3.imshow(img, extent=extent)
+    im = ax3.imshow(img, extent=extent)
+    plt.colorbar(im)
     disable_axis_ticks()
     ax3.set_xlabel('z')
     ax3.set_ylabel('x')
@@ -283,6 +286,11 @@ for cid in set(locs['clusterID']):
                         fontproperties=fontprops)
 
     ax3.add_artist(scalebar)
+
+    # import pickle
+    # with open('tmp.pickle', 'wb') as f:
+    #     pickle.dump(img, f)
+    # print(os.path.abspath('tmp.pickle'))
     
     
 
@@ -320,7 +328,7 @@ for cid in set(locs['clusterID']):
 
     records.append({
         'id': cid,
-        'seperation': abs(max(peak_x) - min(peak_x))
+        'seperation': abs(max(peak_x) - min(peak_x)),
     })
 
 df = pd.DataFrame.from_records(records)
