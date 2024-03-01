@@ -22,12 +22,19 @@ import shutil
 # Openframe
 picked_locs = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted_picked_4.hdf5'
 PIXEL_SIZE = 86
-OVERSAMPLE = 10
+OVERSAMPLE = 30
 
 # FD-LOCO
 # picked_locs = '/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_locs_picked.hdf5'
 # PIXEL_SIZE = 110
 # OVERSAMPLE = 30
+
+
+# Zeiss
+picked_locs = '/media/Data/smlm_z_data/20231121_nup_miguel_zeiss/FOV1/storm_1/storm_1_MMStack_Default.ome_locs_picked.hdf5'
+DEFAULT_PIXEL_SIZE = 106
+OVERSAMPLE = 30
+
 
 picked_locs, old_info = io.load_locs(picked_locs)
 picked_locs = pd.DataFrame.from_records(picked_locs)
@@ -45,8 +52,13 @@ else:
 print('Using', new_locs)
 
 outdir = os.path.join(os.path.dirname(new_locs), 'nup_renders2')
-# shutil.rmtree(outdir, ignore_errors=True)
+shutil.rmtree(outdir, ignore_errors=True)
 os.makedirs(outdir, exist_ok=True)
+
+good_dir = os.path.join(outdir, 'good_results')
+other_dir = os.path.join(outdir, 'other_results')
+os.makedirs(good_dir, exist_ok=True)
+os.makedirs(other_dir, exist_ok=True)
 
 
 new_locs, info = io.load_locs(new_locs)
@@ -56,8 +68,14 @@ assert info[1]['Pixelsize'] == PIXEL_SIZE
 locs = new_locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
 locs['clusterID'] = locs['group']
 
-locs['lpx'] = 0.1
-locs['lpy'] = 0.1
+# import h5py
+# locs_path = './tmp.hdf5'
+# del locs['index']
+# with h5py.File(locs_path, "w") as locs_file:
+#     locs_file.create_dataset("locs", data=locs.to_records())
+# quit()
+
+
 # out_locs = '/home/miguel/Projects/data/results/vit_031_nup/out_nup/locs_3d_grouped.hdf5'
 # locs.to_hdf(out_locs, key='locs')
 
@@ -82,6 +100,15 @@ z_max = 600
 min_log_likelihood = -100
 # min_kde = np.log(0.007)
 min_kde = 0.05
+
+cmap_min_z = -600
+cmap_max_z = -300
+BLUR = 'gaussian'
+color_by_depth = False
+
+MIN_BLUR=0.001
+
+records = []
 
 def filter_locs(l):
     n_points = l.shape[0]
@@ -116,18 +143,6 @@ def filter_locs(l):
 
 plt.rcParams['figure.figsize'] = [18, 6]
 
-def get_viewport(locs, axes, margin=1):
-    mins = [locs[ax].min()-margin for ax in axes]
-    maxs = [locs[ax].max()+margin for ax in axes]
-    return [mins, maxs]
-
-def get_extent(viewport):
-    mins, maxs = viewport
-    return np.array([mins[0], maxs[0], mins[1], maxs[1]]) * PIXEL_SIZE
-
-def disable_axis_ticks():
-    plt.xticks([])
-    plt.yticks([])
 
 def apply_cmap_img(img, cmap_min_coord, cmap_max_coord, img_min_coord, img_max_coord, cmap='gist_rainbow', brightness_factor = 20):
     img = img.squeeze()
@@ -185,113 +200,180 @@ def center_view(locs, zrange=200):
 
     return locs
 
-cmap_min_z = -600
-cmap_max_z = -300
-blur = 'gaussian'
-color_by_depth = False
+def get_viewport(locs, axes, margin=1):
+    mins = np.array([locs[ax].min()-margin for ax in axes])
+    maxs = np.array([locs[ax].max()+margin for ax in axes])
+    # mins[:] = min(mins)
+    # maxs[:] = max(maxs)
+    return np.array([mins, maxs])
 
-MIN_BLUR=0.001
+def disable_axis_ticks():
+    plt.xticks([])
+    plt.yticks([])
 
-records = []
+def get_extent(viewport):
+    mins, maxs = viewport
+    return np.array([mins[1], maxs[1], mins[0], maxs[0]]) * PIXEL_SIZE
+
+
+def render_locs(locs, blur=BLUR, min_blur=MIN_BLUR, ang_xyz=(0,0,0), oversample=OVERSAMPLE, barsize=None, ax=None):
+    locs = locs.copy()
+    locs['lpz'] = np.mean(locs[['lpx', 'lpy']].to_numpy()) / 2
+    locs['sz'] = np.mean(locs[['sx', 'sy']].to_numpy()) / 3
+    # locs['lpx'] = 0.1
+    # locs['sx'] = 0.1
+    # locs['lpy'] = 0.1
+    # locs['sy'] = 0.1
+    # disable_axis_ticks()
+    locs['x [nm]'] -= locs['x [nm]'].mean()
+    locs['y [nm]'] -= locs['y [nm]'].mean()
+    locs['z [nm]'] -= locs['z [nm]'].mean()
+    locs['x'] -= locs['x'].mean()
+    locs['y'] -= locs['y'].mean()
+    locs['z'] -= locs['z'].mean()
+
+    viewport = get_viewport(locs, ('y', 'x'))
+
+    _, img = render(locs.to_records(), blur_method=blur, viewport=viewport, min_blur_width=min_blur, ang=ang_xyz, oversampling=oversample)
+    if ang_xyz == (0, 0, 0):
+        plt.xlabel('x [nm]')
+        plt.ylabel('y [nm]')
+    elif ang_xyz == (np.pi/2, 0, 0):
+        plt.xlabel('z [nm]')
+        plt.ylabel('x [nm]')
+        img = img.T
+        viewport = np.fliplr(viewport)
+
+    elif ang_xyz == (0, np.pi/2, 0):
+        plt.xlabel('z [nm]')
+        plt.ylabel('y [nm]')
+    else:
+        print('Axis labels uncertain due to rotation angle')
+
+    extent = get_extent(viewport)
+    if ax is None:
+        ax = plt.gca()
+    ax.set_aspect('equal', 'box')
+    img_plot = plt.imshow(img, extent=extent)
+    plt.colorbar(img_plot)
+
+    if barsize is not None:
+        scalebar = AnchoredSizeBar(ax.transData,
+                            barsize, f'{barsize} nm', 'lower center', 
+                            pad=0.1,
+                            color='white',
+                            frameon=False,
+                            size_vertical=1,
+                            fontproperties=fontprops)
+        ax.add_artist(scalebar)
+
 for cid in set(locs['clusterID']):
+    # if not cid in [23, 24, 4, 8, 10, 86, 75, 79, 88, 102]:
+    #     continue
     print('Cluster ID', cid)
-    if cid != 23:
-        continue
-    cluster_locs = locs[locs['clusterID']==cid]
-    cluster_locs = filter_locs(cluster_locs)
 
-    if len(cluster_locs) == 0:
-        continue
-    cluster_locs = center_view(cluster_locs)
+    df = locs[locs['clusterID']==cid]
+    df = filter_locs(df)
 
-    df = cluster_locs
+    if df.shape[0] == 0:
+        continue
+    df = center_view(df)
+
     try:
-        del cluster_locs['index']
+        del df['index']
     except ValueError:
         pass
-    cluster_locs = cluster_locs.to_records()
 
-    if cluster_locs.shape[0] < 5:
+    if df.shape[0] < 5:
         print('No remaining localisations, continuing...')
         continue
 
     fig = plt.figure()
     gs = fig.add_gridspec(1, 4)
     plt.subplots_adjust(wspace=0.3, hspace=0)
+    
     ax1 = fig.add_subplot(gs[0, 0])
-    viewport = get_viewport(cluster_locs, ('y', 'x'))
-    _, img = render(cluster_locs, info, blur_method=blur, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)
-    extent = get_extent(viewport)
-    ax1.imshow(img, extent=extent)
-    disable_axis_ticks()
-    ax1.set_xlabel('x')
-    ax1.set_ylabel('y')
-    scalebar = AnchoredSizeBar(ax1.transData,
-                        110, '110 nm', 'lower center', 
-                        pad=0.1,
-                        color='white',
-                        frameon=False,
-                        size_vertical=1,
-                        fontproperties=fontprops)
-    ax1.add_artist(scalebar)
+    render_locs(df, BLUR, MIN_BLUR, (0,0,0), OVERSAMPLE, barsize=110, ax=ax1)
 
     ax2 = fig.add_subplot(gs[0, 1])
-    yz_locs = cluster_locs.copy()
-    yz_locs[['x', 'z']] = yz_locs[['z', 'x']]
-    viewport = get_viewport(yz_locs, ('y', 'x'), margin=1)
-    _, img = render(yz_locs, info, blur_method=blur, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)    
+    render_locs(df, BLUR, MIN_BLUR, (np.pi/2,0,0), OVERSAMPLE, barsize=50, ax=ax2)
 
-    extent = get_extent(((viewport[0][1], viewport[0][0]),(viewport[1][1], viewport[1][0])))
-    if color_by_depth:
-        img = apply_cmap_img(img, cmap_min_z, cmap_max_z, cluster_locs['z [nm]'].min(), cluster_locs['z [nm]'].max(), brightness_factor=0.75)
-    ax2.imshow(img, extent=extent)
-    disable_axis_ticks()
-    ax2.set_xlabel('z')
-    ax2.set_ylabel('y')
-
-    scalebar = AnchoredSizeBar(ax2.transData,
-                        50, '50 nm', 'lower right', 
-                        pad=0.1,
-                        color='white',
-                        frameon=False,
-                        size_vertical=1,
-                        fontproperties=fontprops)
-
-    ax2.add_artist(scalebar)
-
-
-    
     ax3 = fig.add_subplot(gs[0, 2])
-    xz_locs = cluster_locs.copy()
-    xz_locs[['y', 'z']] = xz_locs[['z', 'y']]
-    viewport = get_viewport(xz_locs, ('y', 'x'), margin=1)
-    _, img = render(xz_locs, info, blur_method=blur, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)
-    
-    extent = get_extent([[viewport[0][0], viewport[0][1]], [viewport[1][0], viewport[1][1]]])
-    img = img.T
-    if color_by_depth:
-        img = apply_cmap_img(img, cmap_min_z, cmap_max_z, cluster_locs['z [nm]'].min(), cluster_locs['z [nm]'].max(), brightness_factor=0.75)
-                        
-    im = ax3.imshow(img, extent=extent)
-    plt.colorbar(im)
-    disable_axis_ticks()
-    ax3.set_xlabel('z')
-    ax3.set_ylabel('x')
-    scalebar = AnchoredSizeBar(ax3.transData,
-                        50, '50 nm', 'lower right', 
-                        pad=0.1,
-                        color='white',
-                        frameon=False,
-                        size_vertical=1,
-                        fontproperties=fontprops)
+    render_locs(df, BLUR, MIN_BLUR, (0, np.pi/2,0), OVERSAMPLE, barsize=50, ax=ax3)
 
-    ax3.add_artist(scalebar)
+
+    # viewport = get_viewport(cluster_locs, ('y', 'x'))
+    # _, img = render(cluster_locs, info, blur_method=BLUR, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)
+    # extent = get_extent(viewport)
+    # ax1.imshow(img, extent=extent)
+    # disable_axis_ticks()
+    # ax1.set_xlabel('x')
+    # ax1.set_ylabel('y')
+    # scalebar = AnchoredSizeBar(ax1.transData,
+    #                     110, '110 nm', 'lower center', 
+    #                     pad=0.1,
+    #                     color='white',
+    #                     frameon=False,
+    #                     size_vertical=1,
+    #                     fontproperties=fontprops)
+    # ax1.add_artist(scalebar)
+
+    
+    # yz_locs = cluster_locs.copy()
+    # yz_locs[['x', 'z']] = yz_locs[['z', 'x']]
+    # viewport = get_viewport(yz_locs, ('y', 'x'), margin=1)
+    # _, img = render(yz_locs, info, blur_method=blur, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)    
+
+    # extent = get_extent(((viewport[0][1], viewport[0][0]),(viewport[1][1], viewport[1][0])))
+    # if color_by_depth:
+    #     img = apply_cmap_img(img, cmap_min_z, cmap_max_z, cluster_locs['z [nm]'].min(), cluster_locs['z [nm]'].max(), brightness_factor=0.75)
+    # ax2.imshow(img, extent=extent)
+    # disable_axis_ticks()
+    # ax2.set_xlabel('z')
+    # ax2.set_ylabel('y')
+
+    # scalebar = AnchoredSizeBar(ax2.transData,
+    #                     50, '50 nm', 'lower right', 
+    #                     pad=0.1,
+    #                     color='white',
+    #                     frameon=False,
+    #                     size_vertical=1,
+    #                     fontproperties=fontprops)
+
+    # ax2.add_artist(scalebar)
+
+
+    
+    # ax3 = fig.add_subplot(gs[0, 2])
+    # xz_locs = cluster_locs.copy()
+    # xz_locs[['y', 'z']] = xz_locs[['z', 'y']]
+    # viewport = get_viewport(xz_locs, ('y', 'x'), margin=1)
+    # _, img = render(xz_locs, info, blur_method=blur, viewport=viewport, min_blur_width=MIN_BLUR, ang=(0, 0, 0), oversampling=OVERSAMPLE)
+    
+    # extent = get_extent([[viewport[0][0], viewport[0][1]], [viewport[1][0], viewport[1][1]]])
+    # img = img.T
+    # if color_by_depth:
+    #     img = apply_cmap_img(img, cmap_min_z, cmap_max_z, cluster_locs['z [nm]'].min(), cluster_locs['z [nm]'].max(), brightness_factor=0.75)
+                        
+    # im = ax3.imshow(img, extent=extent)
+    # plt.colorbar(im)
+    # disable_axis_ticks()
+    # ax3.set_xlabel('z')
+    # ax3.set_ylabel('x')
+    # scalebar = AnchoredSizeBar(ax3.transData,
+    #                     50, '50 nm', 'lower right', 
+    #                     pad=0.1,
+    #                     color='white',
+    #                     frameon=False,
+    #                     size_vertical=1,
+    #                     fontproperties=fontprops)
+
+    # ax3.add_artist(scalebar)
 
     # import pickle
     # with open('tmp.pickle', 'wb') as f:
     #     pickle.dump(img, f)
     # print(os.path.abspath('tmp.pickle'))
-    
     
 
     ax4 = fig.add_subplot(gs[0, 3])
@@ -299,8 +381,7 @@ for cid in set(locs['clusterID']):
     histplot = sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False)
     if color_by_depth:
         color_histplot(histplot, cmap_min_z, cmap_max_z)
-    sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black')
-
+    sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
 
     x = ax4.lines[0].get_xdata()
     y = ax4.lines[0].get_ydata()
@@ -320,16 +401,25 @@ for cid in set(locs['clusterID']):
     for x, y in zip(peak_x, peak_y):
         ax4.vlines(x, 0, y, label=str(round(x)), color='black')
 
-    septxt = 'Sep: '+ str(round(abs(max(peak_x) - min(peak_x)), 2))+ 'nm'
+    sep = abs(max(peak_x) - min(peak_x))
 
-    plt.suptitle(f'Nup ID: {cid}, N points: {len(cluster_locs)}, {septxt}')
-    plt.savefig(os.path.join(outdir, f'nup_{cid}_{blur}.png'))
-    plt.close()
+    septxt = 'Sep: '+ str(round(sep))+ 'nm'
 
     records.append({
         'id': cid,
-        'seperation': abs(max(peak_x) - min(peak_x)),
+        'seperation': sep,
     })
+
+    margin=10
+    if 50-margin <= sep and sep <= 50+margin:
+        cluster_outdir = good_dir
+    else:
+        cluster_outdir = other_dir
+    plt.suptitle(f'Nup ID: {cid}, N points: {df.shape[0]}, {septxt}')
+    plt.savefig(os.path.join(cluster_outdir, f'nup_{cid}_{BLUR}.png'))
+    plt.close()
+
+
 
 df = pd.DataFrame.from_records(records)
 df.to_csv(os.path.join(outdir, 'nup_report.csv'))
