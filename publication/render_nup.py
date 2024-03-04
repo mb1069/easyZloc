@@ -310,7 +310,11 @@ def prep_dirs(args):
 def load_and_filter_locs(args):
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
-    assert info[1]['Pixelsize'] == args['pixel_size']
+    try:
+        assert info[1]['Pixelsize'] == args['pixel_size']
+    except AssertionError:
+        print('Pixel size mismatch', info[1]['Pixelsize'],  args['pixel_size'])
+        quit(1)
 
     if args['picked_locs']:
         picked_locs, old_info = io.load_locs(args['picked_locs'])
@@ -329,13 +333,16 @@ def main(args):
     locs = load_and_filter_locs(args)
 
     write_nup_plots(locs, args, good_dir, other_dir)
+    print('Wrote dirs:')
+    print(f'\t- {os.path.abspath(good_dir)}')
+    print(f'\t- {os.path.abspath(other_dir)}')
 
     
 
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument('-l', '--locs', default='./locs_3d.hdf')
-    parser.add_argument('-px', '--pixel-size', default=86)
+    parser.add_argument('-px', '--pixel-size', default=86, type=int)
     parser.add_argument('-p', '--picked-locs')
     parser.add_argument('-o', '--outdir', default='./nup_renders3')
     parser.add_argument('-os', '--oversample', default=30)
