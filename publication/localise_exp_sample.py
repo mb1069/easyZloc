@@ -3,21 +3,29 @@ import sys, os
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
+
+# # TODO remove this
+if not os.environ.get('CUDA_VISIBLE_DEVICES'):
+    os.environ['CUDA_VISIBLE_DEVICES']='0'
+
 import joblib
 import json
 import shutil
-import keras
 import argparse
 import pandas as pd
 import h5py
 import numpy as np
 import seaborn as sns
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tensorflow.keras.layers import Resizing, Lambda
 from tensorflow.keras import Sequential
 import tensorflow as tf
+from picasso import io
 
 from util.util import grid_psfs
+
 
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
@@ -25,14 +33,19 @@ N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 VERSION = '0.1'
 
-# TODO remove this
-if not os.environ.get('CUDA_VISIBLE_DEVICES'):
-    os.environ['CUDA_VISIBLE_DEVICES']='0'
+
 
 # Picasso localisation parameters
 BASELINE = 100
 SENSITIVITY = 0.45
 GAIN = 1
+
+
+DEFAULT_LOCS = None
+DEFAULT_SPOTS = None
+DEFAULT_PIXEL_SIZE = None
+PICKED = None
+XLIM, YLIM = None, None
 
 # NUP FD-LOCO
 # DEFAULT_LOCS = '/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_locs.hdf5'
@@ -43,13 +56,24 @@ GAIN = 1
 
 
 
-# # NUP OPENFRAME
-DEFAULT_LOCS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
-DEFAULT_SPOTS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_spots.hdf5'
-PICKED = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted_picked_4.hdf5'
-DEFAULT_PIXEL_SIZE = 86
-XLIM, YLIM = None, None
+# NUP OPENFRAME
+# DEFAULT_LOCS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
+# DEFAULT_SPOTS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_spots.hdf5'
+# PICKED = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted_picked_4.hdf5'
+# DEFAULT_PIXEL_SIZE = 86
+# XLIM, YLIM = None, None
 
+
+
+# Zeiss
+# DEFAULT_LOCS = '/media/Data/smlm_z_data/20231121_nup_miguel_zeiss/FOV1/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
+# DEFAULT_SPOTS = '/media/Data/smlm_z_data/20231121_nup_miguel_zeiss/FOV1/storm_1/storm_1_MMStack_Default.ome_spots.hdf5'
+# PICKED = '/media/Data/smlm_z_data/20231121_nup_miguel_zeiss/FOV1/storm_1/storm_1_MMStack_Default.ome_locs_picked.hdf5'
+# DEFAULT_PIXEL_SIZE = 106
+# XLIM, YLIM = None, None
+
+
+# Unused below
 
 # # Mitochondria (older)
 # DEFAULT_LOCS = '/home/miguel/Projects/data/20231205_miguel_mitochondria/mitochondria/FOV2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
@@ -89,7 +113,7 @@ def save_copy_script(outdir):
 
 def gen_2d_plot(locs, outdir):
     print('Gen 2d plot')
-    sns.scatterplot(data=locs, x='x', y='y', marker='.', alpha=0.01)
+    sns.scatterplot(data=locs, x='x', y='y', marker='.', alpha=0.1)
     plt.axis('equal')
     plt.gca().invert_yaxis()
     plt.savefig(os.path.join(outdir, '2d_scatterplot.png'))
@@ -171,9 +195,9 @@ def write_locs(locs, z_coords, args):
         dest_yaml = None
         print('Could not write yaml file (original from 2D localisation not found)')
     print('Wrote results to:')
-    print(f'\t- {locs_path}')
+    print(f'\t- {os.path.abspath(locs_path)}')
     if dest_yaml:
-        print(f'\t- {dest_yaml}')
+        print(f'\t- {os.path.abspath(dest_yaml)}')
 
 
 def write_report_data(args):
@@ -193,13 +217,12 @@ def extract_fov(spots, locs):
     locs = locs.iloc[idx]
     return spots, locs
 
-def tmp_filter_locs(new_locs, spots):
-    old_locs = pd.read_hdf(PICKED, key='locs')
+def tmp_filter_locs(new_locs, spots, args):
+    old_locs = pd.read_hdf(args['picked_locs'], key='locs')
 
     idx = np.argwhere(new_locs['x'].isin(old_locs['x'])).squeeze()
     new_locs = new_locs.iloc[idx]
     spots = spots[idx]
-
     return new_locs, spots
 
 def main(args):
@@ -210,7 +233,9 @@ def main(args):
     with mirrored_strategy.scope():
         model = tf.keras.models.load_model(args['model'])
     
-    locs = pd.read_hdf(args['locs'], key='locs')
+    locs, info = io.load_locs(args['locs'])
+    locs = pd.DataFrame.from_records(locs)
+
     with h5py.File(args['spots'], 'r') as f:
         spots = np.array(f['spots']).astype(np.uint16)
 
@@ -218,18 +243,18 @@ def main(args):
 
 
     # TODO remove temp subset of locs
-    if PICKED:
-        locs, spots = tmp_filter_locs(locs, spots)
+    if args['picked_locs']:
+        locs, spots = tmp_filter_locs(locs, spots, args)
 
     assert locs.shape[0] == spots.shape[0]
-
+    print(locs.shape)
     if XLIM or YLIM:
         spots, locs = extract_fov(spots, locs)
 
     gen_2d_plot(locs, args['outdir'])
     gen_example_spots(spots, args['outdir'])
-
     coords, spots = apply_preprocessing(locs, spots, args)
+    print(coords.shape)
 
     z_coords = pred_z(model, spots, coords, args['outdir'])
 
@@ -243,9 +268,11 @@ def parse_args():
     parser.add_argument('-m', '--model', help='Path to trained 3d localisation model')
     parser.add_argument('-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
     parser.add_argument('-c', '--coords-scaler', help='2D coordinate rescaler')
-    parser.add_argument('-l', '--locs', help='2D localisation file from Picasso', default=DEFAULT_LOCS)
-    parser.add_argument('-s', '--spots', help='Spots file from Picasso', default=DEFAULT_SPOTS)
-    parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', default=DEFAULT_PIXEL_SIZE, type=int)
+    parser.add_argument('-l', '--locs', help='2D localisation file from Picasso', required=True)
+    parser.add_argument('-s', '--spots', help='Spots file from Picasso', required=True)
+    parser.add_argument('-p', '--picked-locs', help='Localisations picked from Locs file using Picasso')
+
+    parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, required=True)
     parser.add_argument('-o', '--outdir', help='Output dir', default='./out')
     args = parser.parse_args()
     args = vars(parser.parse_args())
@@ -267,12 +294,14 @@ def parse_args():
     
 
     for k, v in args.items():
+        if v is None:
+            continue
         if k in ['pixel_size']:
             continue
         try:
             assert os.path.exists(v)
-        except AssertionError:
-            print(f'{v} not found')
+        except Exception:
+            print(f'{k}:{v} not found')
             quit()
     return args
 
