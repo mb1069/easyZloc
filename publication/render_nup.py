@@ -15,6 +15,7 @@ from sklearn.neighbors import KernelDensity
 import os
 import shutil
 from argparse import ArgumentParser
+from scipy.stats import gaussian_kde
 
 
 # old_locs = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/figure2/nup_cell_picked.hdf5'
@@ -179,7 +180,6 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     locs['z'] -= locs['z'].mean()
 
     viewport = get_viewport(locs, ('y', 'x'))
-
     _, img = render(locs.to_records(), blur_method=args['blur_method'], viewport=viewport, min_blur_width=args['min_blur'], ang=ang_xyz, oversampling=args['oversample'])
     if ang_xyz == (0, 0, 0):
         plt.xlabel('x [nm]')
@@ -201,7 +201,7 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
         ax = plt.gca()
     ax.set_aspect('equal', 'box')
     img_plot = plt.imshow(img, extent=extent)
-    plt.colorbar(img_plot)
+    # plt.colorbar(img_plot)
 
     if barsize is not None:
         scalebar = AnchoredSizeBar(ax.transData,
@@ -215,12 +215,12 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
 
 def write_nup_plots(locs, args, good_dir, other_dir):
     for cid in set(locs['clusterID']):
-        # if not cid in [23, 24, 4, 8, 10, 86, 75, 79, 88, 102]:
+        # if not cid in [6, 18, 19, 21, 22]:
         #     continue
         print('Cluster ID', cid)
 
         df = locs[locs['clusterID']==cid]
-        df = filter_locs(df)
+        df = filter_locs(df).copy()
 
         if df.shape[0] == 0:
             continue
@@ -235,9 +235,62 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             print('No remaining localisations, continuing...')
             continue
 
+
         fig = plt.figure()
         gs = fig.add_gridspec(1, 4)
         plt.subplots_adjust(wspace=0.3, hspace=0)
+
+        ax4 = fig.add_subplot(gs[0, 3])
+        sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False)
+
+
+        # Fit KDE to z vals
+        kde = gaussian_kde(df['z [nm]'].to_numpy())
+        kde.set_bandwidth(bw_method='silverman')
+        kde.set_bandwidth(kde.factor * 0.75)
+
+        zvals = np.linspace(df['z [nm]'].min()-25, df['z [nm]'].max()+25, 5000)
+        score = kde(zvals)
+        zvals = zvals.squeeze()
+
+        ax4.plot(zvals, score, label='KDE')
+
+        peak_idx, _ = find_peaks(score)
+        peak_z = zvals[peak_idx]
+        peak_score = score[peak_idx]
+
+        peak_scores_sorted = np.argsort(peak_score)
+        if len(peak_scores_sorted) > 2:
+            peak_scores_sorted = peak_scores_sorted[-2:]
+
+        z_peaks = peak_z[peak_scores_sorted]
+
+
+        if len(peak_scores_sorted) == 2:
+            sep = abs(np.diff(z_peaks)[0])
+            z_between_peaks = np.linspace(min(z_peaks), max(z_peaks), 5000)
+            scores = kde(z_between_peaks)
+            density_cutoff = min(scores) * 1.05
+            df['density'] = kde(df['z [nm]'].to_numpy())
+
+            x = [df['z [nm]'].min(), df['z [nm]'].max()]
+            y = [density_cutoff, density_cutoff]
+            ax4.plot(x, y, 'r--', label='min density')
+            ax4.set_title(f'Sep: {round(sep, 2)}')
+
+            df = df[df['density']>=density_cutoff]
+        else:
+            sep = 0
+
+        # Plot peaks
+        for peak in z_peaks:
+            x = [peak, peak]
+            y = [0, kde(peak).squeeze()]
+            ax4.plot(x, y, 'r--')
+            
+        if df.shape[0] == 0:
+            plt.close()
+            continue
         
         ax1 = fig.add_subplot(gs[0, 0])
         render_locs(df, args, (0,0,0), barsize=110, ax=ax1)
@@ -248,32 +301,27 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         ax3 = fig.add_subplot(gs[0, 2])
         render_locs(df, args, (0, np.pi/2,0), barsize=50, ax=ax3)
 
-        ax4 = fig.add_subplot(gs[0, 3])
-        
-        histplot = sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False)
-        if color_by_depth:
-            color_histplot(histplot, cmap_min_z, cmap_max_z)
-        sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
+        # if color_by_depth:
+        #     color_histplot(histplot, cmap_min_z, cmap_max_z)
+        # sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
 
-        x = ax4.lines[0].get_xdata()
-        y = ax4.lines[0].get_ydata()
-        peaks, _ = find_peaks(y)
+        # x = ax4.lines[0].get_xdata()
+        # y = ax4.lines[0].get_ydata()
+        # peaks, _ = find_peaks(y)
 
-        sorted_peaks = sorted(peaks, key=lambda peak_index: y[peak_index], reverse=True)
-        peak_vals = y[peaks]
-        if len(peak_vals) == 1:
-            n_peaks = 1
-        else:
-            n_peaks = 2
+        # sorted_peaks = sorted(peaks, key=lambda peak_index: y[peak_index], reverse=True)
+        # peak_vals = y[peaks]
+        # if len(peak_vals) == 1:
+        #     n_peaks = 1
+        # else:
+        #     n_peaks = 2
             
-        sorted_peaks = sorted_peaks[:n_peaks]
+        # sorted_peaks = sorted_peaks[:n_peaks]
 
-        peak_x = x[sorted_peaks]
-        peak_y = y[sorted_peaks]
-        for x, y in zip(peak_x, peak_y):
-            ax4.vlines(x, 0, y, label=str(round(x)), color='black')
-
-        sep = abs(max(peak_x) - min(peak_x))
+        # peak_x = x[sorted_peaks]
+        # peak_y = y[sorted_peaks]
+        # for x, y in zip(peak_x, peak_y):
+        #     ax4.vlines(x, 0, y, label=str(round(x)), color='black')
 
         septxt = 'Sep: '+ str(round(sep))+ 'nm'
 

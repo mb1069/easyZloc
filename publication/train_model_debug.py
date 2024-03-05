@@ -21,7 +21,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from util.util import grid_psfs, norm_zero_one
+from util.util import grid_psfs, norm_zero_one, load_dataset, save_dataset, load_model
 from tifffile import imread
 import pandas as pd
 from tqdm import tqdm
@@ -50,6 +50,62 @@ import gc
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
+import tensorflow as tf
+from keras.metrics import mean_squared_error
+from tqdm import tqdm, trange
+
+UPSCALE_RATIO = 1
+
+def norm_sum_imgs(psf):
+    psf_sums = psf.sum(axis=(1,2))
+    psf = psf / psf_sums[:, np.newaxis, np.newaxis]
+    return psf
+
+
+def tf_eval_roll(ref_psf, psf, roll):
+    return tf.reduce_mean(mean_squared_error(ref_psf, tf.roll(psf, roll, axis=0)))
+    
+def tf_find_optimal_roll(ref_tf, img, upscale_ratio=UPSCALE_RATIO):
+    
+    img_tf = tf.convert_to_tensor(img)
+
+    roll_range = ref_tf.shape[0]//4
+    rolls = np.arange(-roll_range, roll_range).astype(int)
+    errors = tf.map_fn(lambda roll: tf_eval_roll(ref_tf, img_tf, roll), rolls, dtype=tf.float64)
+    # idx = 0
+    # for roll in tqdm(rolls):
+    #     error = tf.eval_roll(ref_tf, img_tf, roll)
+    #     print(i, error)
+    #     errors[idx] = error
+    #     idx += 1
+
+    best_roll = rolls[tf.argmin(errors).numpy()]
+    # Prefer small backwards roll to large forwards roll
+    if abs(best_roll - img.shape[0]) < best_roll:
+        best_roll = best_roll - img.shape[0]
+
+    return best_roll/upscale_ratio
+
+def realign_beads(psfs, df, z_step):
+    from sklearn.metrics import euclidean_distances
+    df['dist'] = euclidean_distances(df[['x', 'y']].to_numpy(), [[df['x'].max()/2, df['y'].max()/2]])
+    ref_idx = np.argmin(df['dist'])
+    ref_offset = df.iloc[ref_idx]['offset']
+
+    ref_psf = norm_zero_one(psfs[ref_idx])
+    ref_tf = tf.convert_to_tensor(ref_psf)
+    rolls = []
+    for idx in trange(df.shape[0]):
+        if idx == ref_idx:
+            roll = 0
+        else:
+            psf2 = norm_zero_one(psfs[idx])
+            roll = -tf_find_optimal_roll(ref_tf, psf2)
+        rolls.append(roll)
+    rolls = np.array(rolls)
+    df['offset'] = rolls * z_step
+    df['offset'] += ref_offset
+    return psfs, df
 
 
 # stacks = './stacks.ome.tif'
@@ -58,15 +114,49 @@ N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 # zrange = 1000
 
 
+# from sklearn import linear_model
+# def realign_beads(psfs, df):
+        
+#     X_data = df[['x', 'y']].to_numpy()
+#     Y_data = df['offset'].to_numpy()
+    
+#     reg = linear_model.LinearRegression().fit(X_data, Y_data)
+    
+#     print("coefficients of equation of plane, (a1, a2): ", reg.coef_)
+    
+#     print("value of intercept, c:", reg.intercept_)
+    
+#     z_fit = reg.predict(X_data)
+    
+#     error = abs(z_fit-Y_data)
+#     perc_cutoff = np.percentile(error, 95)
+    
+#     idx = np.argwhere(error<=perc_cutoff).squeeze()
+#     X_data = X_data[idx]
+#     Y_data = Y_data[idx]
+    
+#     psfs = psfs[idx]
+#     df = df.iloc[idx]
+
+#     return psfs, df
+    
+#     # reg = linear_model.LinearRegression().fit(X_data, Y_data)
+#     # print("coefficients of equation of plane, (a1, a2): ", reg.coef_)
+    
+#     # print("value of intercept, c:", reg.intercept_)
+    
+#     # z_fit = reg.predict(X_data)
+#     # df['offset'] = z_fit
+    
+#     # return psfs, df
+    
+
 def load_data(args):
 
     psfs = imread(args['stacks'])[:, :, :, :, np.newaxis]
     locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
-    # idx = (xlim[0] < all_locs['x']) & (all_locs['x'] < xlim[1]) & (ylim[0] < all_locs['y']) & (all_locs['y'] < ylim[1])
-    # locs = all_locs[idx]
-    # psfs = all_psfs[locs['idx']]
-
+    psfs, locs = realign_beads(psfs, locs, args['zstep'])
     ys = []
     for offset in locs['offset']:
         zs = ((np.arange(psfs.shape[1])) * args['zstep']) - offset
@@ -170,8 +260,6 @@ def filter_zranges(train_data, val_data, test_data, args):
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 
-from util.util import NoClipRandomContrast
-
 def aug_train_data(X_train, y_train, args):
     AUG_RATIO = float(args['aug_ratio'])
     if AUG_RATIO == 0:
@@ -186,7 +274,6 @@ def aug_train_data(X_train, y_train, args):
         layers.GaussianNoise(stddev=MAX_GAUSS_NOISE*X_train[0].max(), seed=args['seed']),
         # layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
         layers.RandomBrightness(args['brightness'], value_range=[0, X_train[0].max()], seed=args['seed']),
-        NoClipRandomContrast(0.2, seed=args['seed'], clip=False)
     ])
     
     idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
@@ -266,7 +353,7 @@ def norm_xy_coords(X_train, X_val, X_test):
 options = tf.data.Options()
 options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
 
-def get_dataset(X, y, batch_size, shuffle=False):
+def get_dataset(X, y, args, shuffle=False):
     images, coords = X
     img_ds = tf.data.Dataset.from_tensor_slices(images.astype(np.float32))
     coords_ds = tf.data.Dataset.from_tensor_slices(coords.astype(np.float32))
@@ -274,9 +361,9 @@ def get_dataset(X, y, batch_size, shuffle=False):
 
     x_ds = tf.data.Dataset.zip(img_ds, coords_ds)
     ds = tf.data.Dataset.zip(x_ds, labels_ds)
-    ds = ds.batch(batch_size)
+    ds = ds.batch(args['batch_size'])
     if shuffle:
-        ds = ds.shuffle(buffer_size=int(batch_size*1.5))
+        ds = ds.shuffle(buffer_size=int(args['batch_size']*1.5), seed=args['seed'])
     print('Created dataset')
     ds = ds.with_options(options)
     return ds
@@ -300,12 +387,6 @@ def apply_rescaling(dataset):
 
 def prep_tf_dataset(dataset):
     return dataset.cache().prefetch(tf.data.AUTOTUNE)
-
-def save_dataset(dataset, name, args):
-    dataset.save(os.path.join(args['outdir'], name))
-
-def load_dataset(name, args):
-    return tf.data.Dataset.load(os.path.join(args['outdir'], name))
 
 # Vision transformer training
 
@@ -462,9 +543,6 @@ def train_model(train_data, val_data, test_data, args):
     return model
 
 
-def load_model(args):
-    return keras.models.load_model(os.path.join(args['outdir'], './latest_vit_model3'))
-
 
 def write_report(model, locs, train_data, val_data, test_data, args):
 
@@ -608,11 +686,14 @@ def save_copy_training_script(outdir):
 def prepare_data(args):
 
     stacks, locs, zs = load_data(args)
+
     locs = stratify_data(locs, args)
     train, val, test = split_train_val_test(stacks, locs, zs)
+
     (X_train, y_train), (X_val, y_val), (X_test, y_test) = filter_zranges(train, val, test, args)
 
     X_train, y_train = aug_train_data(X_train, y_train, args)
+
     X_train, X_val, X_test = norm_images(X_train, X_val, X_test, args)
     X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test)
 
@@ -629,9 +710,9 @@ def prepare_data(args):
     print(X_test[0].shape, X_test[1].shape)
 
 
-    train_data = get_dataset(X_train, y_train, args['batch_size'], True)
-    val_data = get_dataset(X_val, y_val, args['batch_size'])
-    test_data = get_dataset(X_test, y_test, args['batch_size'])
+    train_data = get_dataset(X_train, y_train, args, True)
+    val_data = get_dataset(X_val, y_val, args)
+    test_data = get_dataset(X_test, y_test, args)
 
     train_data = apply_rescaling(train_data)
     val_data = apply_rescaling(val_data)
@@ -662,7 +743,7 @@ def main(args):
         test_data = load_dataset('test', args)
         model = load_model(args)
         stacks, locs, zs = load_data(args)
-        # Used to regen train/val/test split
+        # Used to regen train/val/test split in locs file
         split_train_val_test(stacks, locs, zs)
 
 
@@ -689,7 +770,6 @@ def parse_args():
     parser.add_argument('--gauss', type=float, help='Gaussian', default=0.05)
 
     parser.add_argument('--regen-report', action='store_true', help='Regen only training report from existing dir')
-
 
     args = vars(parser.parse_args())
 
@@ -718,4 +798,6 @@ if __name__ == '__main__':
 
     os.makedirs(args['outdir'], exist_ok=True)
 
+    tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
+    tf.config.experimental.enable_op_determinism()
     main(args)
