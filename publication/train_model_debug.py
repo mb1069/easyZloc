@@ -626,7 +626,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax1.scatter(z_vals, pred_vals)
             ax1.plot([-1000, 1000], [-1000, 1000], c='orange')
             ax1.set_xlabel('estimated true z (nm)')
-            ax1.set_ylabel('estimated pred z (nm)')
+            ax1.set_ylabel('Predicted z (nm)')
             ax1.set_title(f'MAE: {mae}nm')
 
             
