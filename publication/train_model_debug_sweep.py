@@ -21,7 +21,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from util.util import grid_psfs, norm_zero_one, load_dataset, save_dataset, load_model
+from util.util import grid_psfs
 from tifffile import imread
 import pandas as pd
 from tqdm import tqdm
@@ -35,7 +35,6 @@ from tensorflow.keras import optimizers
 from keras.callbacks import ReduceLROnPlateau, EarlyStopping, Callback
 from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, Resizing, Lambda
 from tensorflow.keras.models import Model
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras import Sequential, layers
 from vit_keras import vit
 
@@ -52,25 +51,10 @@ N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 import tensorflow as tf
 
-
-def norm_whole_image(psfs):
-    psfs = psfs - psfs.min()
-    psfs = psfs / psfs.max()
-    return psfs
+UPSCALE_RATIO = 1
 
 
-def norm_psf_stack(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min()
-        psfs[i] -= psf_min
-        psf_max = psfs[i].max()
-        psfs[i] /= psf_max
-
-    psfs[psfs<0] = 0
-    return psfs
-
-
-def norm_psf_frame(psfs):
+def norm_frames(psfs):
     for i in range(psfs.shape[0]):
         psf_min = psfs[i].min(axis=(1,2), keepdims=True)
         psfs[i] -= psf_min
@@ -80,26 +64,32 @@ def norm_psf_frame(psfs):
     return psfs
 
 
-def norm_frame_sum(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(axis=(1,2), keepdims=True)
-        psfs[i] -= psf_min
-        psf_sum = psfs[i].sum(axis=(1,2), keepdims = True)
-        psfs[i] /= psf_sum
+def load_test_dataset(args):
+    stacks = os.path.join(args['test_dataset'], 'combined', 'stacks.ome.tif')
+    locs = os.path.join(args['test_dataset'], 'combined', 'locs.hdf')
+    args = {
+        'stacks': stacks,
+        'locs': locs,
+        'debug': False,
+        'zstep': 10
+    }
+    psfs, locs, zs = load_data(args)
 
-    psfs[psfs<0] = 0
-    return psfs  
+    xy_coords = []
+    for xy in locs[['x', 'y']].to_numpy():
+        xy_coords.append(np.repeat(xy[np.newaxis, :], repeats=psfs.shape[1], axis=0))
 
+    xy_coords = np.array(xy_coords)
+    zs = np.array(zs)
 
-norm_funcs = {
-        'frame': norm_psf_frame,
-        'stack': norm_psf_stack,
-        'image': norm_whole_image,
-        'sum': norm_frame_sum
-}
+    zs = np.concatenate(zs)[:, np.newaxis]
+    spots = np.concatenate(psfs)
+    coords = np.concatenate(xy_coords)
+    return spots, coords, zs
+
 
 def load_data(args):
-    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis].astype(float)
+    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis]
     locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
 
@@ -118,11 +108,8 @@ def load_data(args):
 
     ys = np.array(ys)
 
-
-    norm_func = norm_funcs[args['norm']]
-
-    psfs = norm_func(psfs)
-
+    psfs = psfs.astype(float)
+    psfs = norm_frames(psfs)
 
     return psfs, locs, ys
 
@@ -211,86 +198,6 @@ def filter_zranges(train_data, val_data, test_data, args):
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 
-# def aug_train_data(X_train, y_train, args):
-#     AUG_RATIO = float(args['aug_ratio'])
-#     if AUG_RATIO == 0:
-#         return X_train, y_train
-    
-#     MAX_TRANSLATION_PX = 1
-#     X_train[0] = X_train[0].astype(float)
-
-#     MAX_PX_VAL = X_train[0].max() * 1.2
-
-#     img_size = X_train[0].shape[1]
-#     aug_pipeline = Sequential([
-#         layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']),
-#         # layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
-#         layers.RandomBrightness((-args['brightness'], 0), value_range=[0, MAX_PX_VAL], seed=args['seed']),
-#     ])
-    
-#     idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
-
-#     aug_psfs = aug_pipeline(X_train[0][idx].copy(), training=True).numpy()
-#     aug_coords = X_train[1][idx]
-#     aug_z = y_train[idx]
-
-#     stdevs = np.std(aug_psfs, axis=(1,2,3))
-#     idx2 = np.argwhere(stdevs!=0).squeeze()
-#     aug_psfs = aug_psfs[idx2]
-#     aug_coords = aug_coords[idx2]
-#     aug_z = aug_z[idx2]
-
-#     train_psfs = np.concatenate([aug_psfs, X_train[0]])
-#     train_coords = np.concatenate([aug_coords, X_train[1]])
-#     train_zs = np.concatenate([aug_z, y_train])
-
-#     X_train = [train_psfs, train_coords]
-#     y_train = train_zs
-#     del aug_pipeline
-#     # X_train[0] = X_train[0].astype(np.uint16)
-
-#     plt.rcParams['figure.figsize'] = [30, 30]
-
-#     n_samples = 200
-#     sample_images = X_train[0][idx].copy()[:n_samples].copy()  
-#     aug_images = aug_psfs[:n_samples].copy()
-
-#     aug_images[:, 0:3] = np.mean(aug_images)
-
-#     all_images = np.empty((aug_images.shape[0] + sample_images.shape[0], *aug_images.shape[1:]), dtype=aug_images.dtype)
-#     all_images[0::2] = aug_images
-#     all_images[1::2] = sample_images
-
-#     plt.imshow(grid_psfs(all_images.mean(axis=-1)))
-#     plt.title('Augmented images have a fixed-color bar in top of each frame')
-#     outpath = f"{args['outdir']}/sample_aug.png"
-#     plt.savefig(outpath)
-#     plt.close()
-#     wandb.log({'aug_example': wandb.Image(outpath)})
-
-#     return X_train, y_train
-
-
-def norm_images(X_train, X_val, X_test, args):
-    datagen = ImageDataGenerator(
-        rescale=1.0/65336.0,
-        featurewise_center=False,
-        featurewise_std_normalization=False)
-
-    # print('Fitting datagen...')
-    # datagen.fit(X_train[0])
-    # print('Fitted')
-
-    # X_train[0] = datagen.standardize(X_train[0].astype(float))
-    # X_val[0] = datagen.standardize(X_val[0].astype(float))
-    # X_test[0] = datagen.standardize(X_test[0].astype(float))
-
-    outpath = os.path.join(args['outdir'], 'datagen.gz')
-    joblib.dump(datagen, outpath)
-
-    return X_train, X_val, X_test
-
-
 def norm_xy_coords(X_train, X_val, X_test):
     scaler = StandardScaler()
     X_train[1] = scaler.fit_transform(X_train[1])
@@ -371,18 +278,13 @@ def get_model(args):
    # Create the Vision Transformer model using the vit_keras library
    imshape = (image_size, image_size, num_channels)
    img_input = Input(shape=imshape)
-   extra_aug = Sequential([], name='extra_aug')
-
-   if args['gauss']:
-       extra_aug.add(layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']))
-
-   if args['brightness']:
-       extra_aug.add(layers.RandomBrightness(args['brightness'], value_range=[0, 1], seed=args['seed']))
-               
+   extra_aug = Sequential([
+        layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']),
         # layers.RandomTranslation(1/imshape[0], 1/imshape[0], seed=args['seed']),
+        layers.RandomBrightness(args['brightness'], value_range=[0, 1], seed=args['seed']),
         # RandomPoissonNoise(imshape, 1, args['poisson_lam'], seed=args['seed'])
-    
-
+    ], name='extra_aug')
+   
 
    img_aug_out = extra_aug(img_input)
    
@@ -391,13 +293,14 @@ def get_model(args):
    
    x_coords = layers.Dense(64)(x_coords)
    
-   
-#    from keras.applications import MobileNetV3Large
-#    vit_model = MobileNetV3Large(input_shape=(image_size, image_size, num_channels),
-#                                 weights='imagenet',
-#                                 include_top=False,
-#                                 include_preprocessing=False)
-   vit_model = vit.vit_b16(image_size=image_size, 
+   model_version = {
+       'vit_b16': vit.vit_b16,
+       'vit_b32': vit.vit_b32,
+       'vit_l16': vit.vit_l16,
+       'vit_l32': vit.vit_l32,
+   }[args['architecture']]
+
+   vit_model = model_version(image_size=image_size, 
                            activation='sigmoid',
                            pretrained=True,
                            include_top=False,
@@ -408,9 +311,9 @@ def get_model(args):
    # Add additional layers for regression prediction
    x = Flatten()(x)
    x = tf.concat([x, x_coords], axis=-1)
-   x = Dense(128, activation='gelu')(x)
+   x = Dense(args['dense1'], activation='gelu')(x)
    x = Dropout(0.5)(x)
-   x = Dense(64, activation='gelu')(x)
+   x = Dense(args['dense2'], activation='gelu')(x)
    x = Dropout(0.5)(x)
    regression_output = Dense(num_classes, activation='linear')(x)  # Linear activation for regression
    model = Model(inputs=[img_input, coords_input], outputs=regression_output)
@@ -470,15 +373,10 @@ class ValidationCallback(Callback):
 
 
 def gen_example_aug_imgs(aug_model, train_data, args):
-    n_batches = 2
-    aug_images = []
     for (imgs, _), _ in train_data.as_numpy_iterator():
-        aug_images.append(aug_model(imgs).numpy().mean(axis=-1))
-        n_batches -= 1
-        if n_batches == 0:
-            break
+        aug_images = aug_model(imgs).numpy().mean(axis=-1)
+        break
 
-    aug_images = np.concatenate(aug_images)
     plt.figure(figsize=(30, 10), dpi=300)
     plt.imshow(grid_psfs(aug_images, cols=32))
     outpath = f"{args['outdir']}/sample_aug.png"
@@ -487,6 +385,7 @@ def gen_example_aug_imgs(aug_model, train_data, args):
     wandb.log({'aug_example': wandb.Image(outpath)})
     del aug_model
     gc.collect()
+
 
 
 def train_model(train_data, val_data, args):
@@ -559,154 +458,16 @@ def train_model(train_data, val_data, args):
     return model
 
 
+def get_test_error(model, test_data):
+    z = []
+    for batch in test_data.as_numpy_iterator():
+        z.append(batch[1])
 
-def write_report(model, locs, train_data, val_data, test_data, args):
+    z = np.concatenate(z)
 
-    # Check output on all stacks
+    preds = model.predict(test_data, batch_size=N_GPUS * 4096).squeeze()
+    return mean_absolute_error(z, preds)
 
-    tbl_data = []
-    report_data = {
-        'code_version': VERSION,
-        'change_notes': CHANGE_NOTES,
-        'args': args
-    }
-
-    os.makedirs(os.path.join(args['outdir'], 'results'), exist_ok=True)
-    
-    sns.scatterplot(data=locs, x='x', y='y', hue='ds')
-    plt.savefig(os.path.join(args['outdir'], 'results', 'data_split') + '.png')
-    plt.close()
-
-
-
-    for dirname, ds in [('train', train_data), ('val', val_data), ('test', test_data)]:
-        os.makedirs(os.path.join(args['outdir'], 'results', dirname), exist_ok=True)
-        images = []
-        coords = []
-        z = []
-        for batch in ds.as_numpy_iterator():
-            images.append(batch[0][0])
-            coords.append(batch[0][1])
-            z.append(batch[1])
-
-        images = np.concatenate(images)
-        coords = np.concatenate(coords)
-        z = np.concatenate(z)
-
-        preds = model.predict(ds, batch_size=N_GPUS * 4096).squeeze()
-        errors = abs(preds - z.squeeze())
-
-        fname = f'{dirname}_all_preds'
-        fig = plt.figure(layout="constrained", figsize=(12, 10), dpi=80)
-        gs = plt.GridSpec(2, 2, figure=fig)
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax2 = fig.add_subplot(gs[0, 1])
-        ax3 = fig.add_subplot(gs[1, 0])
-        ax4 = fig.add_subplot(gs[1, 1])
-
-        plt.title(fname)
-        ax1.scatter(z, preds)
-        ds_df = pd.DataFrame.from_dict({'x': coords[:, 0], 'y': coords[:, 1], 'error': errors})
-        ds_df = ds_df.groupby(['x', 'y']).mean().reset_index()
-
-        sns.scatterplot(data=ds_df, x='x', y='y', hue='error', ax=ax2)
-        sns.scatterplot(data=ds_df, x='x', y='error', ax=ax3)
-        sns.scatterplot(data=ds_df, x='y', y='error', ax=ax4)
-        img_fname = fname + '.png'
-        outpath = os.path.join(args['outdir'], 'results', dirname, img_fname)
-        plt.savefig(outpath)
-        plt.close()
-        wandb.log({img_fname: wandb.Image(outpath)})
-
-
-        coords2 = ['_'.join(x.astype(str)) for x in coords]
-        ds_true_vals = []
-        ds_pred_vals = []
-        for num, c in tqdm(enumerate(sorted(set(coords2))), total=len(set(coords2))):
-            idx = [i for i, val in enumerate(coords2) if val==c]
-            idx = sorted(idx, key=lambda i: z.squeeze()[i])
-            z_vals = z.squeeze()[idx]
-            ds_true_vals.extend(z_vals)
-            pred_vals = preds[idx]
-            group_images = images[idx]
-            error = abs(z_vals-pred_vals)
-
-            mae = str(round(error.mean(), 2))
-            
-            fig = plt.figure(layout="constrained", figsize=(12, 10), dpi=80)
-            gs = plt.GridSpec(4, 2, figure=fig)
-            ax1 = fig.add_subplot(gs[:, 0])
-            ax2 = fig.add_subplot(gs[0, 1])
-            ax3 = fig.add_subplot(gs[1, 1])
-            ax4 = fig.add_subplot(gs[2, 1])
-            ax5 = fig.add_subplot(gs[3, 1])
-
-
-            fig.suptitle(f'Bead: {num}')
-            ax1.scatter(z_vals, pred_vals)
-            ax1.plot([-1000, 1000], [-1000, 1000], c='orange')
-            ax1.set_xlabel('estimated true z (nm)')
-            ax1.set_ylabel('Predicted z (nm)')
-            ax1.set_title(f'MAE: {mae}nm')
-
-            
-            ax2.imshow(grid_psfs(group_images.mean(axis=-1)).T)
-            ax2.set_title('Ordered by frame')
-
-            ax3.imshow(grid_psfs(group_images[np.argsort(error)].mean(axis=-1)).T)
-            ax3.set_title('Ordered by increasing prediction error')
-            ax3.set_xlabel(f'min error: {str(round(min(error), 2))}, max error: {str(round(max(error), 2))}')
-
-            
-            ax4.scatter(coords[:, 0], coords[:, 1])
-            gcoords = list(map(lambda x: [float(x)], c.split('_')))
-            ax4.scatter(gcoords[0], gcoords[1])
-            ax4.set_xlabel('x (nm)')
-            ax4.set_ylabel('y (nm)')
-            ax4.set_title('2d loc within dataset')
-
-            sorted_idx = np.argsort(z_vals)
-            ax5.plot(z_vals[sorted_idx], group_images.max(axis=(1,2,3))[sorted_idx])
-            ax5.set_title('Max normalised pixel intensity over z')
-            ax5.set_xlabel('z (frame)')
-            ax5.set_ylabel('pixel intensity')    
-                
-            
-            img_fname = f'{dirname}_bead' + f'_{num}.png'
-            outpath = os.path.join(args['outdir'], 'results', dirname, img_fname)
-            plt.savefig(outpath)
-            
-            plt.close()
-
-            # wandb.log({img_fname: wandb.Image(outpath)})
-
-            if dirname != 'train':
-                adj_mae, offset, zs, error = bestfit_error(z_vals, pred_vals)
-                pred_vals -= offset
-                adj_mae = str(round(adj_mae, 2))
-                offset_fmt = str(round(offset, 2))
-                ax1.set_title(f'MAE: {mae}nm, corrected MAE: {adj_mae}nm, offset: {offset_fmt}nm')
-                mae = adj_mae
-            else:
-                offset = 0
-
-            ds_pred_vals.extend(pred_vals)
-            tbl_data.append((dirname, num,  gcoords[0][0], gcoords[1][0], mae, min(error), max(error),offset))
-        
-        ds_mae = mean_absolute_error(ds_true_vals, ds_pred_vals)
-        report_data[dirname+'_mae'] = float(ds_mae)
-        print(dirname, report_data[dirname+'_mae'])
-
-        wandb.run.summary[dirname+'_mae'] = float(ds_mae)
-
-
-    df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'min_error', 'max_error', 'offset'])
-    df.to_csv(os.path.join(args['outdir'], 'results', 'results.csv'))
-
-
-    with open(os.path.join(args['outdir'], 'results', 'report.json'), 'w') as fp:
-        json_dumps_str = json.dumps(report_data, indent=4)
-        print(json_dumps_str, file=fp)
 
 
 def save_copy_training_script(outdir):
@@ -714,37 +475,17 @@ def save_copy_training_script(outdir):
     shutil.copy(os.path.abspath(__file__), outpath)
 
 
+def _run_config(X_train, y_train, X_val, y_val, X_test, y_test, args):
+    wandb.init(project='smlm_z3')
 
-def prepare_data(args):
-
-    stacks, locs, zs = load_data(args)
-
-    locs = stratify_data(locs, args)
-    train, val, test = split_train_val_test(stacks, locs, zs)
-
-    (X_train, y_train), (X_val, y_val), (X_test, y_test) = filter_zranges(train, val, test, args)
-
-    X_train, X_val, X_test = norm_images(X_train, X_val, X_test, args)
-
-    # X_train, y_train = aug_train_data(X_train, y_train, args)
-
-    X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test)
-
-    print('Train pixel vals', X_train[0].min(), X_train[0].max())
-    print('Val pixel vals', X_val[0].min(), X_val[0].max())
-    print('Test pixel vals', X_test[0].min(), X_test[0].max())
-
-    print('Train XY vals', X_train[1].min(), X_train[1].max())
-    print('Val XY vals',X_val[1].min(), X_val[1].max())
-    print('Test XY vals',X_test[1].min(), X_test[1].max())
-
-    print('Train Z vals', y_train.min(), y_train.max())
-    print('Val Z vals', y_val.min(), y_val.max())
-    print('Test Z vals', y_test.min(), y_test.max())
-
-    print('Train', X_train[0].shape, X_train[1].shape)
-    print('Val', X_val[0].shape, X_val[1].shape)
-    print('Test', X_test[0].shape, X_test[1].shape)
+    run_args = wandb.config
+    args['batch_size'] = run_args.batch_size
+    args['learning_rate'] = run_args.learning_rate
+    args['gauss'] = run_args.aug_gauss
+    args['brightness'] = run_args.aug_brightness
+    args['dense1'] = run_args.dense1
+    args['dense2'] = run_args.dense2
+    args['architecture'] = run_args.architecture
 
     train_data = get_dataset(X_train, y_train, args, True)
     val_data = get_dataset(X_val, y_val, args)
@@ -759,32 +500,79 @@ def prepare_data(args):
     val_data = prep_tf_dataset(val_data)
     test_data = prep_tf_dataset(test_data)    
 
-    save_dataset(val_data, 'val', args)
-    save_dataset(test_data, 'test', args)
 
-    save_dataset(train_data, 'train', args)
+    model = train_model(train_data, val_data, args)
+    wandb.log({'ext_test_mae':  get_test_error(model, test_data)})
 
-    return train_data, val_data, test_data, locs
 
 def main(args):
 
-    if not args['regen_report']:
-        train_data, val_data, test_data, locs = prepare_data(args)
-        save_copy_training_script(args['outdir'])
-        model = train_model(train_data, val_data, args)
-    else:
-        train_data = load_dataset('train', args)
-        val_data = load_dataset('val', args)
-        test_data = load_dataset('test', args)
-        model = load_model(args)
-        stacks, locs, zs = load_data(args)
-        # Used to regen train/val/test split in locs file
-        split_train_val_test(stacks, locs, zs)
+    stacks, locs, zs = load_data(args)
+
+    test = load_test_dataset(args)
+
+    locs = stratify_data(locs, args)
+    train, val, _ = split_train_val_test(stacks, locs, zs)
+
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = filter_zranges(train, val, test, args)
+
+    X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test)
+
+    def run_config():
+        return _run_config(X_train, y_train, X_val, y_val, X_test, y_test, args)
 
 
-    write_report(model, locs, train_data, val_data, test_data, args)
+    sweep_config = {
+        "name": "lr_batch_size3",
+        "program": "/data/mdb119/publication/train_model_debug_sweep.py",
+        "method": "bayes",
+        "metric": {"goal": "minimize", "name": "ext_test_mae"},
+        "parameters": {
+            "learning_rate": {
+                "max": 0.005,
+                "min": 0.000001
+            },
+            "batch_size": {
+                "values": [512, 1024]
+            },
+            'aug_gauss': {
+                "max": 0.05,
+                "min": 0.00001
+            },
+            'dense1': {
+                'values': [16, 32, 64, 128, 256, 512]
+            },
+            'dense2': {
+                'values': [16, 32, 64, 128, 256, 512]
+            },
+            'aug_brightness': {
+                "max": 0.7,
+                "min": 0.01
+            },
+            'norm': {
+                'values': ['frame'],
+            },
+            'dataset': {
+                'values': ['openframe']
+            },
+            'architecture': {
+                'values': ['vit_b16', 'vit_b32', 'vit_l16', 'vit_l32']
+            },
+            'n_gpus': {
+                'values': [N_GPUS]
+            },
+            'aug_ratio': {
+                'values': [0]
+            },
+            'aug_poisson_lam': {
+                'values': [0]
+            },
+        },
+    }
 
-    print('Output in:', args['outdir'])
+
+    sweep_id = wandb.sweep(sweep=sweep_config, project='smlm_z2')
+    wandb.agent(sweep_id, function=run_config, count=100)
 
 
 def parse_args():
@@ -799,18 +587,16 @@ def parse_args():
 
     parser.add_argument('--debug', action='store_true', help='Train on subset of data for fewer iterations')
     parser.add_argument('--seed', default=42, type=int, help='Random seed (for consistent results)')
-    parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)')
-    parser.add_argument('--aug_ratio', type=float, help='Aug ratio', default=2)
-    parser.add_argument('--brightness', type=float, help='Brightness', default=0.01)
-    parser.add_argument('--gauss', type=float, help='Gaussian', default=0.05)
-    parser.add_argument('--norm')
-    parser.add_argument('--poisson-lam', type=float, help='Poisson noise lam', default=1000)
+    # parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)', default=512)
+    # parser.add_argument('--aug_ratio', type=float, help='Aug ratio', default=2)
+    # parser.add_argument('--brightness', type=float, help='Brightness', default=0.5)
+    # parser.add_argument('--gauss', type=float, help='Gaussian', default=0.005)
+    # parser.add_argument('--poisson-lam', type=float, help='Poisson noise lam', default=1000)
 
-    parser.add_argument('--dataset', help='Dataset type, used for wandb', default='unknown')
+    parser.add_argument('--dataset', help='Dataset type, used for wandb', default='openframe')
+    parser.add_argument('--test-dataset', default='~/data/20231128_tubulin_miguel/')
 
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.0001)
-
-    parser.add_argument('--regen-report', action='store_true', help='Regen only training report from existing dir')
 
     args = vars(parser.parse_args())
 
@@ -828,27 +614,7 @@ def parse_args():
     for k, v in args.items():
         print(f'{k}: {v}')
 
-    if not args['batch_size']:
-        args['batch_size'] = 512 * N_GPUS
-
     return args
-
-def init_wandb(args):
-    wandb.init(
-        project='smlm_z2',
-        config = {
-            'dataset': args['dataset'],
-            'learning_rate': args['learning_rate'],
-            'architecture': 'vit_b16',
-            'batch_size': args['batch_size'],
-            'n_gpus': N_GPUS,
-            'aug_ratio': args['aug_ratio'],
-            'aug_brightness': args['brightness'],
-            'aug_gauss': args['gauss'],
-            'aug_poisson_lam': args['poisson_lam'],
-            'norm': args['norm']
-        }
-    )
 
 if __name__ == '__main__':
     args = parse_args()
@@ -858,6 +624,5 @@ if __name__ == '__main__':
     tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
     tf.config.experimental.enable_op_determinism()
 
-    init_wandb(args)
     main(args)
     wandb.finish()

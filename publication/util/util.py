@@ -1,5 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from tensorflow import keras
+import os
+import tensorflow as tf
 
 def norm_zero_one(s):
     return (s - s.min()) / (s.max() - s.min())
@@ -46,3 +49,48 @@ def grid_psfs(psfs, cols=10):
     psfs = [np.concatenate(p, axis=-1) for p in psfs]
     psfs = np.concatenate(psfs, axis=-2)
     return psfs
+
+
+def load_model(args):
+    return keras.models.load_model(os.path.join(args['outdir'], './latest_vit_model3'))
+
+def save_dataset(dataset, name, args):
+    dataset.save(os.path.join(args['outdir'], name))
+
+def load_dataset(name, args):
+    return tf.data.Dataset.load(os.path.join(args['outdir'], name))
+
+from tensorflow.keras import Sequential, layers
+
+image_size = 64
+imshape = (image_size, image_size)
+img_preprocessing = Sequential([
+    layers.Resizing(*imshape),
+    layers.Lambda(tf.image.grayscale_to_rgb)
+])
+
+
+def apply_resizing(img_xy, z):
+    img_xy = list(img_xy)
+    img_xy[0] = img_preprocessing(img_xy[0])
+    return tuple(img_xy), z
+
+
+
+def apply_img_norm(img_xy, z):
+    img_xy = list(img_xy)
+    imgs = img_xy[0]
+    means = tf.math.reduce_mean(imgs, axis=(1,2,3), keepdims=True)
+
+    imgs -= means
+    maxs = tf.math.reduce_max(imgs, axis=(1,2,3), keepdims=True)
+    imgs = tf.nn.relu(imgs / maxs)
+    return (imgs, img_xy[1]), z
+
+
+def preprocess_img_dataset(dataset, batch_size=None):
+    dataset = dataset.map(apply_resizing, num_parallel_calls=tf.data.AUTOTUNE)
+    if batch_size:
+        dataset = dataset.batch(batch_size)
+    dataset = dataset.map(apply_img_norm, num_parallel_calls=tf.data.AUTOTUNE)
+    return dataset

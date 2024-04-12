@@ -19,10 +19,13 @@ import seaborn as sns
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from tensorflow.keras.layers import Resizing, Lambda
+from tensorflow.keras import Sequential
 import tensorflow as tf
 from picasso import io
 
-from util.util import grid_psfs, preprocess_img_dataset
+from util.util import grid_psfs
+
 
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
@@ -86,6 +89,8 @@ XLIM, YLIM = None, None
 # XLIM = 400, 600
 # YLIM = 700, 1000
 
+
+
 # Tubulin
 # DEFAULT_LOCS = '/media/Data/smlm_z_data/20231212_miguel_openframe/tubulin/FOV1/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
 # DEFAULT_SPOTS = '/media/Data/smlm_z_data/20231212_miguel_openframe/tubulin/FOV1/storm_1/storm_1_MMStack_Default.ome_spots.hdf5'
@@ -93,54 +98,6 @@ XLIM, YLIM = None, None
 # DEFAULT_PIXEL_SIZE = 86
 # XLIM = 200, 800
 # YLIM = 500, 1000
-
-
-def norm_whole_image(psfs):
-    psfs = psfs - psfs.min()
-    psfs = psfs / psfs.max()
-    return psfs
-
-
-def norm_psf_stack(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min()
-        psfs[i] = psfs[i] - psf_min
-        psf_max = psfs[i].max()
-        psfs[i] = psfs[i] / psf_max
-
-    psfs[psfs<0] = 0
-    return psfs
-
-
-def norm_psf_frame(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(keepdims=True)
-        psfs[i] = psfs[i] - psf_min
-        psf_max = psfs[i].max(keepdims=True)
-        psfs[i] = psfs[i] / psf_max
-
-    psfs[psfs<0] = 0
-    return psfs
-
-
-def norm_frame_sum(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(keepdims=True)
-        psfs[i] = psfs[i] - psf_min
-        psf_sum = psfs[i].sum()
-        psfs[i] = psfs[i] / psf_sum
-
-    psfs[psfs<0] = 0
-    return psfs  
-
-
-norm_funcs = {
-        'frame': norm_psf_frame,
-        'stack': norm_psf_frame,
-        'image': norm_whole_image,
-        'sum': norm_frame_sum
-}
-
 
 def write_arg_log(args):
     outfile = os.path.join(args['outdir'], 'config.json')
@@ -171,12 +128,13 @@ def gen_example_spots(spots, outdir):
     plt.close()
 
 
-def apply_coords_norm(locs, spots, args):
+def apply_normalisation(locs, spots, args):
     print('Applying pre-processing')
     scaler = joblib.load(args['coords_scaler'])
+    datagen = joblib.load(args['datagen'])
 
     coords = scaler.transform(locs[['x', 'y']].to_numpy())
-    # spots = datagen.standardize(spots.astype(np.float32))[:, :, :, np.newaxis]
+    spots = datagen.standardize(spots.astype(np.float32))[:, :, :, np.newaxis]
 
     return coords, spots
 
@@ -184,7 +142,7 @@ def apply_coords_norm(locs, spots, args):
 
 def pred_z(model, spots, coords, outdir):
 
-    spots = spots.astype(np.float32)[:, :, :, np.newaxis]
+    spots = spots.astype(np.float32)
     print('Predicting z locs')
 
     # exp_spots = tf.data.Dataset.from_generator(
@@ -198,14 +156,27 @@ def pred_z(model, spots, coords, outdir):
 
     fake_z = np.zeros((coords.shape[0],))
     exp_z = tf.data.Dataset.from_tensor_slices(fake_z)
-    print(spots.shape)
+
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
 
-    BATCH_SIZE = 2048
+    image_size = 64
+    imshape = (image_size, image_size)
+    img_preprocessing = Sequential([
+        Resizing(*imshape),
+        Lambda(tf.image.grayscale_to_rgb)
+    ])
 
-    exp_data = preprocess_img_dataset(exp_data, BATCH_SIZE)
+    def apply_rescaling(x, y):
+        x = [x[0], x[1]]
+        x[0] = img_preprocessing(x[0])
+        return tuple(x), y
+
+    BATCH_SIZE = 2048
+    exp_data = exp_data.map(apply_rescaling, num_parallel_calls=tf.data.AUTOTUNE).batch(BATCH_SIZE)
 
     pred_z = model.predict(exp_data, batch_size=BATCH_SIZE, workers=4)
+
+    
 
     sns.histplot(pred_z)
     plt.savefig(os.path.join(outdir, 'z_histplot.png'))
@@ -230,7 +201,6 @@ def write_locs(locs, z_coords, args):
     else:
         dest_yaml = None
         print('Could not write yaml file (original from 2D localisation not found)')
-        quit(1)
     print('Wrote results to:')
     print(f'\t- {os.path.abspath(locs_path)}')
     if dest_yaml:
@@ -255,18 +225,17 @@ def extract_fov(spots, locs):
     return spots, locs
 
 def tmp_filter_locs(new_locs, spots, args):
-    picked_locs = pd.read_hdf(args['picked_locs'], key='locs')
+    old_locs = pd.read_hdf(args['picked_locs'], key='locs')
 
-    new_locs.reset_index(inplace=True, drop=False)
+    idx = np.argwhere(new_locs['x'].isin(old_locs['x'])).squeeze()
+    new_locs = new_locs.iloc[idx]
+    spots = spots[idx]
+    return new_locs, spots
 
-    merge_locs = pd.merge(new_locs, picked_locs, how='inner', on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
-    spots = spots[merge_locs['index']]
-    assert 'group' in list(merge_locs)
-    del merge_locs['index']
-    # idx = np.argwhere(new_locs['x'].isin(picked_locs['x'])).squeeze()
-    # new_locs = new_locs.iloc[idx]
-    # spots = spots[idx]
-    return merge_locs, spots
+def norm_ds_zero_one(imgs):
+    mins = imgs.min(axis=(1,2,3), keepdims=True)
+    maxs = imgs.max(axis=(1,2,3), keepdims=True)
+    return (imgs-mins) / (maxs-mins)
 
 def main(args):
     write_report_data(args)
@@ -283,6 +252,8 @@ def main(args):
         spots = np.array(f['spots']).astype(np.uint16)
 
     spots = (spots * GAIN / SENSITIVITY) + BASELINE
+    spots = norm_ds_zero_one(spots)
+
 
     # TODO remove temp subset of locs
     if args['picked_locs']:
@@ -295,18 +266,19 @@ def main(args):
 
     gen_2d_plot(locs, args['outdir'])
     gen_example_spots(spots, args['outdir'])
-    coords, spots = apply_coords_norm(locs, spots, args)
+    coords, spots = apply_normalisation(locs, spots, args)
 
     z_coords = pred_z(model, spots, coords, args['outdir'])
 
     write_locs(locs, z_coords, args)
 
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-mo', '--model-dir', help='Path to output dir from train_model')
     parser.add_argument('-m', '--model', help='Path to trained 3d localisation model')
-    # parser.add_argument('-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
+    parser.add_argument('-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
     parser.add_argument('-c', '--coords-scaler', help='2D coordinate rescaler')
     parser.add_argument('-l', '--locs', help='2D localisation file from Picasso', required=True)
     parser.add_argument('-s', '--spots', help='Spots file from Picasso', required=True)
@@ -314,7 +286,6 @@ def parse_args():
 
     parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, required=True)
     parser.add_argument('-o', '--outdir', help='Output dir', default='./out')
-    parser.add_argument('--norm')
     args = parser.parse_args()
     args = vars(parser.parse_args())
 
@@ -322,7 +293,7 @@ def parse_args():
         print('Using model dir from parameter -mo/--model-dir')
         dirname = os.path.abspath(args['model_dir'])
         args['model'] = os.path.join(dirname, 'latest_vit_model3')
-        # args['datagen'] = os.path.join(dirname, 'datagen.gz')
+        args['datagen'] = os.path.join(dirname, 'datagen.gz')
         args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
 
     args['locs'] = os.path.abspath(args['locs'])
@@ -337,7 +308,7 @@ def parse_args():
     for k, v in args.items():
         if v is None:
             continue
-        if k in ['pixel_size', 'norm']:
+        if k in ['pixel_size']:
             continue
         try:
             assert os.path.exists(v)

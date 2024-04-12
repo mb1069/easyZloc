@@ -17,12 +17,16 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 from scipy.optimize import curve_fit
 from scipy.special import erf
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error as skl_mean_squared_error
+from keras.metrics import mean_squared_error
 from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import gaussian_filter
 import json
 import shutil
 from util.util import grid_psfs
+import seaborn as sns
+import tensorflow as tf
+
 
 def norm_zero_one(s):
     max_s = s.max()
@@ -30,7 +34,7 @@ def norm_zero_one(s):
     return (s - min_s) / (max_s - min_s)
 
 def validate_args(args):
-    args['bead_stacks'] = [b for b in args['bead_stacks'] if 'ignored' not in b]
+    args['bead_stacks'] = [b for b in args['bead_stacks'] if ('ignored' not in b and 'combined' not in b)]
     n_stacks = len(args['bead_stacks'])
     print(f"Found {n_stacks} bead stacks")
     if n_stacks == 0:
@@ -93,7 +97,7 @@ def get_or_create_locs(slice_path, args):
     print(f'Found {locs.shape[0]} beads')
     return locs, spots
 
-def remove_colocal_locs(locs, spots, args):
+def remove_colocal_beads(locs, spots, args):
     tqdm.write('Removing overlapping beads...')
     coords = locs[['x', 'y']].to_numpy()
     dists = euclidean_distances(coords, coords)
@@ -179,7 +183,7 @@ def filter_mse_zprofile(psf, args, i):
     try:
         params, _ = curve_fit(skewed_gaussian, x_data, y_data, p0=initial_guess, bounds=list(zip(*bounds)))
     except RuntimeError:
-        print('Failed to find fit')
+        print('Failed to find Z fit')
         params = initial_guess
 
     y_fit = skewed_gaussian(x_data, *params)
@@ -243,8 +247,54 @@ def est_bead_offsets(psfs, locs, args):
     locs['offset'] = offsets
 
 
-def filter_mse_xy(stack, max_mse, args):
 
+def tf_eval_roll(ref_psf, psf, roll):
+    return tf.reduce_mean(mean_squared_error(ref_psf, tf.roll(psf, roll, axis=0)))
+    
+def tf_find_optimal_roll(ref_tf, img):
+    
+    img_tf = tf.convert_to_tensor(img)
+
+    roll_range = ref_tf.shape[0]//4
+    rolls = np.arange(-roll_range, roll_range).astype(int)
+    errors = tf.map_fn(lambda roll: tf_eval_roll(ref_tf, img_tf, roll), rolls, dtype=tf.float64)
+    # idx = 0
+    # for roll in tqdm(rolls):
+    #     error = tf.eval_roll(ref_tf, img_tf, roll)
+    #     print(i, error)
+    #     errors[idx] = error
+    #     idx += 1
+
+    best_roll = rolls[tf.argmin(errors).numpy()]
+    # Prefer small backwards roll to large forwards roll
+    if abs(best_roll - img.shape[0]) < best_roll:
+        best_roll = best_roll - img.shape[0]
+
+    return best_roll
+
+def realign_beads(psfs, df, z_step):
+    from sklearn.metrics import euclidean_distances
+    df['dist'] = euclidean_distances(df[['x', 'y']].to_numpy(), [[df['x'].max()/2, df['y'].max()/2]])
+    ref_idx = np.argmin(df['dist'])
+    ref_offset = df.iloc[ref_idx]['offset']
+
+    ref_psf = norm_zero_one(psfs[ref_idx])
+    ref_tf = tf.convert_to_tensor(ref_psf)
+    rolls = []
+    for idx in trange(df.shape[0]):
+        if idx == ref_idx:
+            roll = 0
+        else:
+            psf2 = norm_zero_one(psfs[idx])
+            roll = -tf_find_optimal_roll(ref_tf, psf2)
+        rolls.append(roll)
+    rolls = np.array(rolls)
+    df['offset'] = rolls * z_step
+    df['offset'] += ref_offset
+    return psfs, df
+
+
+def filter_mse_xy(stack, max_mse, i):
     # Define a 2D Gaussian function
     def gaussian_2d(xy, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
         x, y = xy
@@ -268,14 +318,16 @@ def filter_mse_xy(stack, max_mse, args):
     y = np.linspace(0, image_size - 1, image_size)
     x, y = np.meshgrid(x, y)
     
+    image = image / image.max()
+
     # Fit the Gaussian to the image data
-    p0 = [1, image_size / 2, image_size / 2, 5, 5, 0, 0]  # Initial guess for parameters
+    p0 = [1, image_size / 2, image_size / 2, 2, 2, 0, 0]  # Initial guess for parameters
     bounds = [
-        (-np.inf, np.inf),
-        (image_size * (2/5), image_size * (3/5)),
-        (image_size * (2/5), image_size * (3/5)),
-        (-np.inf, np.inf),
-        (-np.inf, np.inf),
+        (0, np.inf),
+        (image_size * (1/5), image_size * (4/5)),
+        (image_size * (1/5), image_size * (4/5)),
+        (0, image_size/3),
+        (0, image_size/3),
         (-np.inf, np.inf),
         (0, np.inf),
     ]
@@ -283,13 +335,14 @@ def filter_mse_xy(stack, max_mse, args):
     try:
         popt, pcov = curve_fit(gaussian_2d, (x, y), image.ravel(), p0=p0, bounds=list(zip(*bounds)))
     except RuntimeError:
-        print('fit failed')
+        print('XY fit failed')
         popt = p0
     render = gaussian_2d((x, y), *popt).reshape(image.shape)
 
-    error = mean_squared_error(render, image)
+    error = skl_mean_squared_error(render, image)
 
     # if error > max_mse:
+    #     print(i)
     #     # Visualize the original image and the fitted Gaussian
     #     plt.plot(sharp)
     #     plt.show()
@@ -313,11 +366,13 @@ def filter_beads(spots, locs, stacks, args, rejected_outpath):
     print('Removing poorly imaged beads...', end='')
     # Filter by SNR threshold
 
+    mse_xy = np.array([filter_mse_xy(psf, 10000, i) for i, psf in enumerate(stacks)])
     snrs = np.array([snr(psf) > args['min_snr'] for psf in stacks])
     fwhms = np.array([has_fwhm(psf, args) for psf in stacks])
     mse_z = np.array([filter_mse_zprofile(psf, args, i) for i, psf in enumerate(stacks)])
-    mse_xy = np.array([filter_mse_xy(psf, 5000, args) for i, psf in enumerate(stacks)])
-
+    # TODO re-enable
+    # mse_xy[:] = True
+    
     # snrs[:] = True
     # mse_filters[:] = True
 
@@ -337,6 +392,7 @@ def filter_beads(spots, locs, stacks, args, rejected_outpath):
 
 
     est_bead_offsets(stacks, locs, args)
+
 
     if args['debug']:
         rejected_idx = np.argwhere(np.invert(snrs & fwhms & mse_z & mse_xy))[:, 0]
@@ -376,6 +432,11 @@ def write_combined_data(stacks, locs, args):
     with open(stacks_config_outpath, 'w') as fp:
         json_dumps_str = json.dumps(stacks_config, indent=4)
         print(json_dumps_str, file=fp)
+
+    figpath = os.path.join(outpath, 'offsets.png')
+    sns.scatterplot(data=locs, x='x', y='y', hue='offset')
+    plt.savefig(figpath)
+    plt.close()
 
     print('Saved results to:')
     print(f'\t{locs_outpath}')
@@ -471,12 +532,11 @@ def main(args):
         
         # raw_locs, spots = filter_by_tmp_locs(raw_locs, spots)
         found_beads += raw_locs.shape[0]
-        locs, spots = remove_colocal_locs(raw_locs, spots, args)
+        locs, spots = remove_colocal_beads(raw_locs, spots, args)
         perc_removed = round(100*(1-(locs.shape[0]/raw_locs.shape[0])), 2)
         print(f'Removed {perc_removed}% due to co-location')
 
         stacks = extract_training_stacks(spots, bead_stack, args)
-
         spots, locs, stacks = filter_beads(spots, locs, stacks, args, rejected_outpath)
         retained_beads += locs.shape[0]
         tqdm.write(f'Retained {stacks.shape[0]} beads')
@@ -488,7 +548,9 @@ def main(args):
     min_stack_length = min(list(map(lambda s: s.shape[1], all_stacks)))
     stacks = [s[:, :min_stack_length] for s in all_stacks]
     locs = pd.concat(all_locs)
-    stacks = np.concatenate(stacks)
+    stacks = np.concatenate(stacks)[:, :, :, :, np.newaxis]
+
+    stacks, locs = realign_beads(stacks, locs, args['zstep'])
 
     # original_locs = pd.read_hdf('/home/miguel/Projects/smlm_z/publication/original_locs.hdf', key='locs')
     # x_coords = set(original_locs['x'])
@@ -505,10 +567,8 @@ def main(args):
 
     if args['debug']:
         outpath = os.path.join(args['outpath'], 'combined', 'debug')
-        write_stack_figures(stacks, locs, outpath)
+        write_stack_figures(stacks.mean(axis=-1), locs, outpath)
         
-
-
 
 def parse_args():
     parser = ArgumentParser(description='')

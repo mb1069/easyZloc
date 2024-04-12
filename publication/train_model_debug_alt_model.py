@@ -37,7 +37,7 @@ from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, Resizing, La
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras import Sequential, layers
-from vit_keras import vit
+from keras.applications import MobileNetV3Small
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, KBinsDiscretizer
@@ -51,55 +51,105 @@ import gc
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 import tensorflow as tf
+from keras.metrics import mean_squared_error
+from tqdm import tqdm, trange
+
+UPSCALE_RATIO = 1
 
 
-def norm_whole_image(psfs):
-    psfs = psfs - psfs.min()
-    psfs = psfs / psfs.max()
-    return psfs
+
+def tf_eval_roll(ref_psf, psf, roll):
+    return tf.reduce_mean(mean_squared_error(ref_psf, tf.roll(psf, roll, axis=0)))
+    
+def tf_find_optimal_roll(ref_tf, img, upscale_ratio=UPSCALE_RATIO):
+    
+    img_tf = tf.convert_to_tensor(img)
+
+    roll_range = ref_tf.shape[0]//4
+    rolls = np.arange(-roll_range, roll_range).astype(int)
+    errors = tf.map_fn(lambda roll: tf_eval_roll(ref_tf, img_tf, roll), rolls, dtype=tf.float64)
+    # idx = 0
+    # for roll in tqdm(rolls):
+    #     error = tf.eval_roll(ref_tf, img_tf, roll)
+    #     print(i, error)
+    #     errors[idx] = error
+    #     idx += 1
+
+    best_roll = rolls[tf.argmin(errors).numpy()]
+    # Prefer small backwards roll to large forwards roll
+    if abs(best_roll - img.shape[0]) < best_roll:
+        best_roll = best_roll - img.shape[0]
+
+    return best_roll/upscale_ratio
+
+def realign_beads(psfs, df, z_step):
+    from sklearn.metrics import euclidean_distances
+    df['dist'] = euclidean_distances(df[['x', 'y']].to_numpy(), [[df['x'].max()/2, df['y'].max()/2]])
+    ref_idx = np.argmin(df['dist'])
+    ref_offset = df.iloc[ref_idx]['offset']
+
+    ref_psf = norm_zero_one(psfs[ref_idx])
+    ref_tf = tf.convert_to_tensor(ref_psf)
+    rolls = []
+    for idx in trange(df.shape[0]):
+        if idx == ref_idx:
+            roll = 0
+        else:
+            psf2 = norm_zero_one(psfs[idx])
+            roll = -tf_find_optimal_roll(ref_tf, psf2)
+        rolls.append(roll)
+    rolls = np.array(rolls)
+    df['offset'] = rolls * z_step
+    df['offset'] += ref_offset
+    return psfs, df
 
 
-def norm_psf_stack(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min()
-        psfs[i] -= psf_min
-        psf_max = psfs[i].max()
-        psfs[i] /= psf_max
-
-    psfs[psfs<0] = 0
-    return psfs
+# stacks = './stacks.ome.tif'
+# locs = './locs.hdf'
+# Z_STEP = 10
+# zrange = 1000
 
 
-def norm_psf_frame(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(axis=(1,2), keepdims=True)
-        psfs[i] -= psf_min
-        psf_max = psfs[i].max(axis=(1,2), keepdims=True)
-        psfs[i] /= psf_max
-    psfs[psfs<0] = 0
-    return psfs
+# from sklearn import linear_model
+# def realign_beads(psfs, df):
+        
+#     X_data = df[['x', 'y']].to_numpy()
+#     Y_data = df['offset'].to_numpy()
+    
+#     reg = linear_model.LinearRegression().fit(X_data, Y_data)
+    
+#     print("coefficients of equation of plane, (a1, a2): ", reg.coef_)
+    
+#     print("value of intercept, c:", reg.intercept_)
+    
+#     z_fit = reg.predict(X_data)
+    
+#     error = abs(z_fit-Y_data)
+#     perc_cutoff = np.percentile(error, 95)
+    
+#     idx = np.argwhere(error<=perc_cutoff).squeeze()
+#     X_data = X_data[idx]
+#     Y_data = Y_data[idx]
+    
+#     psfs = psfs[idx]
+#     df = df.iloc[idx]
 
-
-def norm_frame_sum(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(axis=(1,2), keepdims=True)
-        psfs[i] -= psf_min
-        psf_sum = psfs[i].sum(axis=(1,2), keepdims = True)
-        psfs[i] /= psf_sum
-
-    psfs[psfs<0] = 0
-    return psfs  
-
-
-norm_funcs = {
-        'frame': norm_psf_frame,
-        'stack': norm_psf_stack,
-        'image': norm_whole_image,
-        'sum': norm_frame_sum
-}
+#     return psfs, df
+    
+#     # reg = linear_model.LinearRegression().fit(X_data, Y_data)
+#     # print("coefficients of equation of plane, (a1, a2): ", reg.coef_)
+    
+#     # print("value of intercept, c:", reg.intercept_)
+    
+#     # z_fit = reg.predict(X_data)
+#     # df['offset'] = z_fit
+    
+#     # return psfs, df
+    
 
 def load_data(args):
-    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis].astype(float)
+
+    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis]
     locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
 
@@ -107,21 +157,17 @@ def load_data(args):
         idx = np.arange(psfs.shape[0])
         np.random.seed(42)
         idx = np.random.choice(idx, 2000)
-        idx = idx[0:100]
+        idx = idx[0:50]
         psfs = psfs[idx]
         locs = locs.iloc[idx]
 
+    psfs, locs = realign_beads(psfs, locs, args['zstep'])
     ys = []
     for offset in locs['offset']:
         zs = ((np.arange(psfs.shape[1])) * args['zstep']) - offset
         ys.append(zs)
 
     ys = np.array(ys)
-
-
-    norm_func = norm_funcs[args['norm']]
-
-    psfs = norm_func(psfs)
 
 
     return psfs, locs, ys
@@ -151,6 +197,7 @@ def stratify_data(locs, args):
     locs['group'] = groups
 
     return locs
+# In[10]:
 
 
 # Withold some PSFs for evaluation
@@ -192,7 +239,6 @@ def split_train_val_test(psfs, locs, ys):
 
     return (train_psfs, train_coords, train_ys), (val_psfs, val_coords, val_ys), (test_psfs, test_coords, test_ys)
 
-
 def filter_zranges(train_data, val_data, test_data, args):
     train_psfs, train_coords, train_ys = train_data
     val_psfs, val_coords, val_ys = val_data
@@ -211,65 +257,64 @@ def filter_zranges(train_data, val_data, test_data, args):
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 
-# def aug_train_data(X_train, y_train, args):
-#     AUG_RATIO = float(args['aug_ratio'])
-#     if AUG_RATIO == 0:
-#         return X_train, y_train
+def aug_train_data(X_train, y_train, args):
+    AUG_RATIO = float(args['aug_ratio'])
+    if AUG_RATIO == 0:
+        return X_train, y_train
     
-#     MAX_TRANSLATION_PX = 1
-#     X_train[0] = X_train[0].astype(float)
+    MAX_TRANSLATION_PX = 1
+    X_train[0] = X_train[0].astype(float)
 
-#     MAX_PX_VAL = X_train[0].max() * 1.2
+    MAX_PX_VAL = X_train[0].max() * 1.2
 
-#     img_size = X_train[0].shape[1]
-#     aug_pipeline = Sequential([
-#         layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']),
-#         # layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
-#         layers.RandomBrightness((-args['brightness'], 0), value_range=[0, MAX_PX_VAL], seed=args['seed']),
-#     ])
+    img_size = X_train[0].shape[1]
+    aug_pipeline = Sequential([
+        layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']),
+        # layers.RandomTranslation(MAX_TRANSLATION_PX/img_size, MAX_TRANSLATION_PX/img_size, seed=args['seed']),
+        layers.RandomBrightness((-args['brightness'], 0), value_range=[0, MAX_PX_VAL], seed=args['seed']),
+    ])
     
-#     idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
+    idx = np.random.randint(0, X_train[0].shape[0], size=int(AUG_RATIO*X_train[0].shape[0]))
 
-#     aug_psfs = aug_pipeline(X_train[0][idx].copy(), training=True).numpy()
-#     aug_coords = X_train[1][idx]
-#     aug_z = y_train[idx]
+    aug_psfs = aug_pipeline(X_train[0][idx].copy(), training=True).numpy()
+    aug_coords = X_train[1][idx]
+    aug_z = y_train[idx]
 
-#     stdevs = np.std(aug_psfs, axis=(1,2,3))
-#     idx2 = np.argwhere(stdevs!=0).squeeze()
-#     aug_psfs = aug_psfs[idx2]
-#     aug_coords = aug_coords[idx2]
-#     aug_z = aug_z[idx2]
+    stdevs = np.std(aug_psfs, axis=(1,2,3))
+    idx2 = np.argwhere(stdevs!=0).squeeze()
+    aug_psfs = aug_psfs[idx2]
+    aug_coords = aug_coords[idx2]
+    aug_z = aug_z[idx2]
 
-#     train_psfs = np.concatenate([aug_psfs, X_train[0]])
-#     train_coords = np.concatenate([aug_coords, X_train[1]])
-#     train_zs = np.concatenate([aug_z, y_train])
+    train_psfs = np.concatenate([aug_psfs, X_train[0]])
+    train_coords = np.concatenate([aug_coords, X_train[1]])
+    train_zs = np.concatenate([aug_z, y_train])
 
-#     X_train = [train_psfs, train_coords]
-#     y_train = train_zs
-#     del aug_pipeline
-#     # X_train[0] = X_train[0].astype(np.uint16)
+    X_train = [train_psfs, train_coords]
+    y_train = train_zs
+    del aug_pipeline
+    # X_train[0] = X_train[0].astype(np.uint16)
 
-#     plt.rcParams['figure.figsize'] = [30, 30]
+    plt.rcParams['figure.figsize'] = [30, 30]
 
-#     n_samples = 200
-#     sample_images = X_train[0][idx].copy()[:n_samples].copy()  
-#     aug_images = aug_psfs[:n_samples].copy()
+    n_samples = 200
+    sample_images = X_train[0][idx].copy()[:n_samples].copy()  
+    aug_images = aug_psfs[:n_samples].copy()
 
-#     aug_images[:, 0:3] = np.mean(aug_images)
+    aug_images[:, 0:3] = np.mean(aug_images)
 
-#     all_images = np.empty((aug_images.shape[0] + sample_images.shape[0], *aug_images.shape[1:]), dtype=aug_images.dtype)
-#     all_images[0::2] = aug_images
-#     all_images[1::2] = sample_images
+    all_images = np.empty((aug_images.shape[0] + sample_images.shape[0], *aug_images.shape[1:]), dtype=aug_images.dtype)
+    all_images[0::2] = aug_images
+    all_images[1::2] = sample_images
 
-#     plt.imshow(grid_psfs(all_images.mean(axis=-1)))
-#     plt.title('Augmented images have a fixed-color bar in top of each frame')
-#     outpath = f"{args['outdir']}/sample_aug.png"
-#     plt.savefig(outpath)
-#     plt.close()
-#     wandb.log({'aug_example': wandb.Image(outpath)})
+    plt.imshow(grid_psfs(all_images.mean(axis=-1)))
+    plt.title('Augmented images have a fixed-color bar in top of each frame')
+    outpath = f"{args['outdir']}/sample_aug.png"
+    plt.savefig(outpath)
+    plt.close()
+    wandb.log({'aug_example': wandb.Image(outpath)})
 
-#     return X_train, y_train
-
+    return X_train, y_train
 
 def norm_images(X_train, X_val, X_test, args):
     datagen = ImageDataGenerator(
@@ -281,9 +326,9 @@ def norm_images(X_train, X_val, X_test, args):
     # datagen.fit(X_train[0])
     # print('Fitted')
 
-    # X_train[0] = datagen.standardize(X_train[0].astype(float))
-    # X_val[0] = datagen.standardize(X_val[0].astype(float))
-    # X_test[0] = datagen.standardize(X_test[0].astype(float))
+    X_train[0] = datagen.standardize(X_train[0].astype(float))
+    X_val[0] = datagen.standardize(X_val[0].astype(float))
+    X_test[0] = datagen.standardize(X_test[0].astype(float))
 
     outpath = os.path.join(args['outdir'], 'datagen.gz')
     joblib.dump(datagen, outpath)
@@ -302,10 +347,8 @@ def norm_xy_coords(X_train, X_val, X_test):
 
     return X_train, X_val, X_test
 
-
 options = tf.data.Options()
 options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
-
 
 def get_dataset(X, y, args, shuffle=False):
     images, coords = X
@@ -339,52 +382,24 @@ def apply_resizing(dataset):
 
     return dataset.map(lambda x, y: _apply_resizing(x, y), num_parallel_calls=tf.data.AUTOTUNE)
 
-
 def prep_tf_dataset(dataset):
     return dataset.cache().prefetch(tf.data.AUTOTUNE)
 
+# Vision transformer training
 
 # Assuming your input images have size (image_size, image_size, num_channels)
 num_channels = 3
 num_classes = 1  # Regression task, predicting a single continuous value
 
-
-class RandomPoissonNoise(layers.Layer):
-    def __init__(self, shape, lam_min, lam_max, rescale=65336, seed=42):
-        super(RandomPoissonNoise, self).__init__()
-        tf.random.set_seed(seed)
-
-        self.shape = shape
-        self.lam_min = lam_min
-        self.lam_max = lam_max
-        self.rescale = rescale
-
-    def call(self, input, training=False):
-        if training==False:
-            return input
-        lam = tf.random.uniform((1,), self.lam_min, self.lam_max)[0]
-        noise = tf.random.poisson(self.shape, lam, dtype=tf.float32) / self.rescale
-        return input + noise
-
-
-def get_model(args):
+def get_model():
    # Create the Vision Transformer model using the vit_keras library
-   imshape = (image_size, image_size, num_channels)
-   img_input = Input(shape=imshape)
-   extra_aug = Sequential([], name='extra_aug')
 
-   if args['gauss']:
-       extra_aug.add(layers.GaussianNoise(stddev=args['gauss'], seed=args['seed']))
-
-   if args['brightness']:
-       extra_aug.add(layers.RandomBrightness(args['brightness'], value_range=[0, 1], seed=args['seed']))
-               
-        # layers.RandomTranslation(1/imshape[0], 1/imshape[0], seed=args['seed']),
-        # RandomPoissonNoise(imshape, 1, args['poisson_lam'], seed=args['seed'])
-    
-
-
-   img_aug_out = extra_aug(img_input)
+   img_input = Input(shape=(image_size, image_size, num_channels))
+   extra_aug = Sequential([
+    #    layers.RandomBrightness((-0.5, 0), value_range=(0, 1)),
+       layers.GaussianNoise(0.001),
+    ], name='extra_aug')
+   img_input = extra_aug(img_input)
    
    coords_input = layers.Input((2,))
    x_coords = layers.Dense(64)(coords_input)
@@ -392,31 +407,29 @@ def get_model(args):
    x_coords = layers.Dense(64)(x_coords)
    
    
-#    from keras.applications import MobileNetV3Large
-#    vit_model = MobileNetV3Large(input_shape=(image_size, image_size, num_channels),
-#                                 weights='imagenet',
-#                                 include_top=False,
-#                                 include_preprocessing=False)
-   vit_model = vit.vit_b16(image_size=image_size, 
-                           activation='sigmoid',
-                           pretrained=True,
-                           include_top=False,
-                           pretrained_top=False)
+#    vit_model = vit.vit_b16(image_size=image_size, 
+#                            activation='sigmoid',
+#                            pretrained=True,
+#                            include_top=False,
+#                            pretrained_top=False)
+   vit_model = MobileNetV3Small(input_shape=(image_size, image_size, num_channels),
+                                weights='imagenet',
+                                include_top=False,
+                                include_preprocessing=False)
    
 
-   x = vit_model(img_aug_out)
+   x = vit_model(img_input)
    # Add additional layers for regression prediction
    x = Flatten()(x)
    x = tf.concat([x, x_coords], axis=-1)
-   x = Dense(128, activation='gelu')(x)
+   x = Dense(128, activation='relu')(x)
    x = Dropout(0.5)(x)
-   x = Dense(64, activation='gelu')(x)
+   x = Dense(64, activation='relu')(x)
    x = Dropout(0.5)(x)
    regression_output = Dense(num_classes, activation='linear')(x)  # Linear activation for regression
    model = Model(inputs=[img_input, coords_input], outputs=regression_output)
-   
-   aug_model = Model(inputs=img_input, outputs=img_aug_out)
-   return model, aug_model
+
+   return model
 
 
 def bestfit_error(z_true, z_pred):
@@ -469,25 +482,6 @@ class ValidationCallback(Callback):
         logs['val_loss'] = mean_error
 
 
-def gen_example_aug_imgs(aug_model, train_data, args):
-    n_batches = 2
-    aug_images = []
-    for (imgs, _), _ in train_data.as_numpy_iterator():
-        aug_images.append(aug_model(imgs).numpy().mean(axis=-1))
-        n_batches -= 1
-        if n_batches == 0:
-            break
-
-    aug_images = np.concatenate(aug_images)
-    plt.figure(figsize=(30, 10), dpi=300)
-    plt.imshow(grid_psfs(aug_images, cols=32))
-    outpath = f"{args['outdir']}/sample_aug.png"
-    plt.savefig(outpath)
-    plt.close()
-    wandb.log({'aug_example': wandb.Image(outpath)})
-    del aug_model
-    gc.collect()
-
 
 def train_model(train_data, val_data, args):
     epochs = 3 if args['debug'] else 5000
@@ -515,20 +509,19 @@ def train_model(train_data, val_data, args):
         # model = keras.models.load_model('./latest_vit_model3/')
 
         # Traing from scratch
-        model, aug_model = get_model(args)
+        model = get_model()
 
         # Compile the model
         model.compile(loss='mean_squared_error', optimizer=optimizers.AdamW(learning_rate=lr), metrics=['mean_absolute_error'])
 
-    gen_example_aug_imgs(aug_model, train_data, args)
 
 
     callbacks = [
         ValidationCallback(val_data),
         WandbMetricsLogger(),
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
-                        patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
-        EarlyStopping(monitor='val_mean_absolute_error', patience=10,
+                        patience=10, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
+        EarlyStopping(monitor='val_mean_absolute_error', patience=20,
                     verbose=True, min_delta=1, restore_best_weights=True),
                     
     ]
@@ -678,7 +671,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             
             plt.close()
 
-            # wandb.log({img_fname: wandb.Image(outpath)})
+            wandb.log({img_fname: wandb.Image(outpath)})
 
             if dirname != 'train':
                 adj_mae, offset, zs, error = bestfit_error(z_vals, pred_vals)
@@ -713,8 +706,6 @@ def save_copy_training_script(outdir):
     outpath = os.path.join(outdir, 'train_model.py.bak')
     shutil.copy(os.path.abspath(__file__), outpath)
 
-
-
 def prepare_data(args):
 
     stacks, locs, zs = load_data(args)
@@ -726,7 +717,7 @@ def prepare_data(args):
 
     X_train, X_val, X_test = norm_images(X_train, X_val, X_test, args)
 
-    # X_train, y_train = aug_train_data(X_train, y_train, args)
+    X_train, y_train = aug_train_data(X_train, y_train, args)
 
     X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test)
 
@@ -803,8 +794,6 @@ def parse_args():
     parser.add_argument('--aug_ratio', type=float, help='Aug ratio', default=2)
     parser.add_argument('--brightness', type=float, help='Brightness', default=0.01)
     parser.add_argument('--gauss', type=float, help='Gaussian', default=0.05)
-    parser.add_argument('--norm')
-    parser.add_argument('--poisson-lam', type=float, help='Poisson noise lam', default=1000)
 
     parser.add_argument('--dataset', help='Dataset type, used for wandb', default='unknown')
 
@@ -844,9 +833,7 @@ def init_wandb(args):
             'n_gpus': N_GPUS,
             'aug_ratio': args['aug_ratio'],
             'aug_brightness': args['brightness'],
-            'aug_gauss': args['gauss'],
-            'aug_poisson_lam': args['poisson_lam'],
-            'norm': args['norm']
+            'aug_gauss': args['gauss'] 
         }
     )
 
