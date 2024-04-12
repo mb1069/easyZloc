@@ -16,7 +16,8 @@ import os
 import shutil
 from argparse import ArgumentParser
 from scipy.stats import gaussian_kde
-
+import wandb
+import json
 
 # old_locs = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/figure2/nup_cell_picked.hdf5'
 
@@ -165,8 +166,10 @@ def get_extent(viewport, pixel_size):
 def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     
     locs = locs.copy()
-    locs['lpz'] = np.mean(locs[['lpx', 'lpy']].to_numpy()) / 2
-    locs['sz'] = np.mean(locs[['sx', 'sy']].to_numpy()) / 3
+    if 'lpz' not in list(locs):
+        locs['lpz'] = np.mean(locs[['lpx', 'lpy']].to_numpy()) / 2
+    if 'sz' not in list(locs):
+        locs['sz'] = np.mean(locs[['sx', 'sy']].to_numpy()) / 3
     # locs['lpx'] = 0.1
     # locs['sx'] = 0.1
     # locs['lpy'] = 0.1
@@ -214,15 +217,19 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
         ax.add_artist(scalebar)
 
 def write_nup_plots(locs, args, good_dir, other_dir):
+    good_nup = 0
+    bad_nup = 0
     for cid in set(locs['clusterID']):
         # if not cid in [6, 18, 19, 21, 22]:
         #     continue
-        print('Cluster ID', cid)
+        print('Cluster ID', cid, end='')
 
         df = locs[locs['clusterID']==cid]
-        df = filter_locs(df).copy()
+        if not args['disable_filter']:
+            df = filter_locs(df).copy()
 
         if df.shape[0] == 0:
+            print('')
             continue
         df = center_view(df)
 
@@ -241,13 +248,13 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         plt.subplots_adjust(wspace=0.3, hspace=0)
 
         ax4 = fig.add_subplot(gs[0, 3])
-        sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False)
+        sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False, bins=40)
 
 
         # Fit KDE to z vals
         kde = gaussian_kde(df['z [nm]'].to_numpy())
         kde.set_bandwidth(bw_method='silverman')
-        kde.set_bandwidth(kde.factor * 0.75)
+        kde.set_bandwidth(kde.factor * args['kde_factor'])
 
         zvals = np.linspace(df['z [nm]'].min()-25, df['z [nm]'].max()+25, 5000)
         score = kde(zvals)
@@ -265,7 +272,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
         z_peaks = peak_z[peak_scores_sorted]
 
-
+        orig_df = df.copy()
         if len(peak_scores_sorted) == 2:
             sep = abs(np.diff(z_peaks)[0])
             z_between_peaks = np.linspace(min(z_peaks), max(z_peaks), 5000)
@@ -293,7 +300,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             continue
         
         ax1 = fig.add_subplot(gs[0, 0])
-        render_locs(df, args, (0,0,0), barsize=110, ax=ax1)
+        render_locs(orig_df, args, (0,0,0), barsize=110, ax=ax1)
 
         ax2 = fig.add_subplot(gs[0, 1])
         render_locs(df, args, (np.pi/2,0,0), barsize=50, ax=ax2)
@@ -333,14 +340,26 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         margin=10
         if 50-margin <= sep and sep <= 50+margin:
             cluster_outdir = good_dir
+            print(' Good')
+            good_nup += 1
         else:
             cluster_outdir = other_dir
+            print(' Bad')
+            bad_nup += 1
         plt.suptitle(f'Nup ID: {cid}, N points: {df.shape[0]}, {septxt}')
-        plt.savefig(os.path.join(cluster_outdir, f'nup_{cid}_{BLUR}.png'))
+        imname = f'nup_{cid}_{BLUR}.png'
+        outpath = os.path.join(cluster_outdir, imname)
+        plt.savefig(outpath)
         plt.close()
+        wandb.log({imname: wandb.Image(outpath)})
+
 
     df = pd.DataFrame.from_records(records)
     df.to_csv(os.path.join(args['outdir'], 'nup_report.csv'))
+    wandb.log({'mean_nup_sep_mean': np.mean(df['seperation'])})
+    wandb.log({'nup_sep_std': np.std(df['seperation'])})
+    wandb.log({'nup_good': good_nup})
+    wandb.log({'nup_bad': bad_nup})
 
 
 def prep_dirs(args):
@@ -355,7 +374,7 @@ def prep_dirs(args):
     return good_dir, other_dir
 
 
-def load_and_filter_locs(args):
+def load_and_pick_locs(args):
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
     try:
@@ -368,6 +387,7 @@ def load_and_filter_locs(args):
         picked_locs, old_info = io.load_locs(args['picked_locs'])
         picked_locs = pd.DataFrame.from_records(picked_locs)
         locs = locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
+
     locs['clusterID'] = locs['group']
     locs['z'] = locs['z [nm]'] / args['pixel_size']
     return locs
@@ -378,7 +398,7 @@ def main(args):
     # Save a copy of this script for reproducibility
     shutil.copy(os.path.abspath(__file__), os.path.join(args['outdir'], 'render_nup.py.bak'))
 
-    locs = load_and_filter_locs(args)
+    locs = load_and_pick_locs(args)
 
     write_nup_plots(locs, args, good_dir, other_dir)
     print('Wrote dirs:')
@@ -393,11 +413,77 @@ def parse_args():
     parser.add_argument('-px', '--pixel-size', default=86, type=int)
     parser.add_argument('-p', '--picked-locs')
     parser.add_argument('-o', '--outdir', default='./nup_renders3')
-    parser.add_argument('-os', '--oversample', default=30)
+    parser.add_argument('-os', '--oversample', default=30, type=int)
     parser.add_argument('-mb', '--min-blur', default=0.001)
     parser.add_argument('-b', '--blur-method', default='gaussian')
+    parser.add_argument('-df', '--disable-filter', action='store_true')
+    parser.add_argument('-k', '--kde-factor', default=0.75, type=float)
     return vars(parser.parse_args())
+
+def find_matching_runs(hyper_params):
+    print(hyper_params.keys())
+    runs = wandb.Api().runs('smlm_z3')
+    print(f"Matching run with... {hyper_params['norm']},{hyper_params['dataset']}, {hyper_params['aug_gauss']}, {hyper_params['aug_brightness']}, {hyper_params['learning_rate']}, {hyper_params['batch_size']}")
+    try:
+        while True:
+
+            run = runs.next()
+            rc = run.config
+
+            try:
+                config_match = [
+                    str(rc['norm']) == str(hyper_params['norm']),
+                    str(rc['dataset']) == str(hyper_params['dataset']),
+                    float(rc['aug_gauss']) == float(hyper_params['aug_gauss']),
+                    float(rc['aug_brightness']) == float(hyper_params['aug_brightness']),
+                    float(rc['learning_rate']) == float(hyper_params['learning_rate']),
+                    float(rc['batch_size']) == float(hyper_params['batch_size']),
+
+                ]
+            except KeyError:
+                config_match = [False]
+            if all(config_match):
+                return run.id
+    except StopIteration:
+        print('Failed to find match...')
+        quit(1)
+        return None
+
+
+
+def init_model_run(args):
+    model_dir = os.path.abspath(os.path.join(args['outdir'], os.pardir, os.pardir))
+    report_path = os.path.join(model_dir, 'results', 'report.json')
+
+    with open(report_path) as f:
+        report_data = json.load(f)
+
+        
+    if report_data.get('wandb_run_id'):
+        run_id = report_data['wandb_run_id']
+    else:
+        hyper_params = {k: v for k, v in report_data['args'].items() if k in ['norm', 'dataset', 'aug_gauss', 'aug_ratio', 'batch_size', 'learning_rate', 'aug_brightness']}
+        run_id = find_matching_runs(hyper_params)
+
+    if run_id is None:
+        wandb.init(project='smlm_z3')
+    else:
+        wandb.init(project='smlm_z3', id=run_id, resume=True)
+
+    wandb.run.log_code(".")
+
+    try:
+        nup_z_hist_path = os.path.abspath(os.path.join(args['outdir'], os.pardir, 'z_histplot.png'))
+        wandb.log({'nup_z_hist': wandb.Image(nup_z_hist_path)})
+    except Exception as e:
+        print(e)
+        
+
+
 
 
 if __name__=='__main__':
-    main(parse_args())
+    args = parse_args()
+    init_model_run(args)
+
+    main(args)
