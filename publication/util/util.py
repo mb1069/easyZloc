@@ -64,13 +64,13 @@ from tensorflow.keras import Sequential, layers
 
 image_size = 64
 imshape = (image_size, image_size)
-img_preprocessing = Sequential([
-    layers.Resizing(*imshape),
-    layers.Lambda(tf.image.grayscale_to_rgb)
-])
 
 
 def apply_resizing(img_xy, z):
+    img_preprocessing = Sequential([
+        layers.Resizing(*imshape),
+        layers.Lambda(tf.image.grayscale_to_rgb)
+    ])
     img_xy = list(img_xy)
     img_xy[0] = img_preprocessing(img_xy[0])
     return tuple(img_xy), z
@@ -81,7 +81,6 @@ def apply_img_norm(img_xy, z):
     img_xy = list(img_xy)
     imgs = img_xy[0]
     means = tf.math.reduce_mean(imgs, axis=(1,2,3), keepdims=True)
-
     imgs -= means
     maxs = tf.math.reduce_max(imgs, axis=(1,2,3), keepdims=True)
     imgs = tf.nn.relu(imgs / maxs)

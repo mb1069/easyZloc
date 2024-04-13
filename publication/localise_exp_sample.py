@@ -183,14 +183,10 @@ def apply_coords_norm(locs, spots, args):
 
 
 def pred_z(model, spots, coords, outdir):
-
     spots = spots.astype(np.float32)[:, :, :, np.newaxis]
     print('Predicting z locs')
 
-    # exp_spots = tf.data.Dataset.from_generator(
-    #     generator=lambda: iter(spots),
-    #     output_signature=tf.TensorSpec(shape=spots.shape[1:], dtype=tf.float32)
-    # )
+
     exp_spots = tf.data.Dataset.from_tensor_slices(spots)
     exp_coords = tf.data.Dataset.from_tensor_slices(coords)
 
@@ -198,13 +194,11 @@ def pred_z(model, spots, coords, outdir):
 
     fake_z = np.zeros((coords.shape[0],))
     exp_z = tf.data.Dataset.from_tensor_slices(fake_z)
-    print('spots', spots.shape)
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
 
     BATCH_SIZE = 2048
 
     exp_data = preprocess_img_dataset(exp_data, BATCH_SIZE)
-
     pred_z = model.predict(exp_data, batch_size=BATCH_SIZE, workers=4)
 
     sns.histplot(pred_z)
@@ -289,7 +283,6 @@ def main(args):
         locs, spots = tmp_filter_locs(locs, spots, args)
 
     assert locs.shape[0] == spots.shape[0]
-    print(locs.shape)
     if XLIM or YLIM:
         spots, locs = extract_fov(spots, locs)
 
@@ -300,6 +293,19 @@ def main(args):
     z_coords = pred_z(model, spots, coords, args['outdir'])
 
     write_locs(locs, z_coords, args)
+
+
+def preprocess_args(args):
+    if args['model_dir']:
+            print('Using model dir from parameter -mo/--model-dir')
+            dirname = os.path.abspath(args['model_dir'])
+            args['model'] = os.path.join(dirname, 'latest_vit_model3')
+            # args['datagen'] = os.path.join(dirname, 'datagen.gz')
+            args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
+
+    args['locs'] = os.path.abspath(args['locs'])
+    args['spots'] = os.path.abspath(args['spots'])
+    return args
 
 
 def parse_args():
@@ -318,15 +324,7 @@ def parse_args():
     args = parser.parse_args()
     args = vars(parser.parse_args())
 
-    if args['model_dir']:
-        print('Using model dir from parameter -mo/--model-dir')
-        dirname = os.path.abspath(args['model_dir'])
-        args['model'] = os.path.join(dirname, 'latest_vit_model3')
-        # args['datagen'] = os.path.join(dirname, 'datagen.gz')
-        args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
-
-    args['locs'] = os.path.abspath(args['locs'])
-    args['spots'] = os.path.abspath(args['spots'])
+    args = preprocess_args(args)
 
     os.makedirs(args['outdir'], exist_ok=True)
 
