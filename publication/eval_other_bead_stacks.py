@@ -202,7 +202,7 @@ def eval_dataset_without_const_bias(coords, zs, z_pred, dname):
     correl = pearsonr(vals, preds)[0]
     
     errors = np.concatenate(errors)
-    print(errors.shape)
+
     mae = np.mean(errors)
     plt.savefig('./tmp.png')
     plt.close()

@@ -164,11 +164,13 @@ def get_extent(viewport, pixel_size):
 
 
 def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
-    
     locs = locs.copy()
     if 'lpz' not in list(locs):
         locs['lpz'] = np.mean(locs[['lpx', 'lpy']].to_numpy()) / 2
     if 'sz' not in list(locs):
+        if not ('sx' in list(locs) and 'sy' in list(locs)):
+            locs['sx'] = 0.5
+            locs['sy'] = 0.5
         locs['sz'] = np.mean(locs[['sx', 'sy']].to_numpy()) / 3
     # locs['lpx'] = 0.1
     # locs['sx'] = 0.1
@@ -351,15 +353,17 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         outpath = os.path.join(cluster_outdir, imname)
         plt.savefig(outpath)
         plt.close()
-        wandb.log({imname: wandb.Image(outpath)})
+        if not args['no_wandb']:
+            wandb.log({imname: wandb.Image(outpath)})
 
 
     df = pd.DataFrame.from_records(records)
     df.to_csv(os.path.join(args['outdir'], 'nup_report.csv'))
-    wandb.log({'mean_nup_sep_mean': np.mean(df['seperation'])})
-    wandb.log({'nup_sep_std': np.std(df['seperation'])})
-    wandb.log({'nup_good': good_nup})
-    wandb.log({'nup_bad': bad_nup})
+    if not args['no_wandb']:
+        wandb.log({'mean_nup_sep_mean': np.mean(df['seperation'])})
+        wandb.log({'nup_sep_std': np.std(df['seperation'])})
+        wandb.log({'nup_good': good_nup})
+        wandb.log({'nup_bad': bad_nup})
 
 
 def prep_dirs(args):
@@ -387,9 +391,11 @@ def load_and_pick_locs(args):
         picked_locs, old_info = io.load_locs(args['picked_locs'])
         picked_locs = pd.DataFrame.from_records(picked_locs)
         locs = locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
-
     locs['clusterID'] = locs['group']
-    locs['z'] = locs['z [nm]'] / args['pixel_size']
+    if 'z' not in list(locs):
+        locs['z'] = locs['z [nm]'] / args['pixel_size']
+    if 'z [nm]' not in list(locs):
+        locs['z [nm]'] = locs['z'] * args['pixel_size']
     return locs
 
 
@@ -418,6 +424,7 @@ def parse_args():
     parser.add_argument('-b', '--blur-method', default='gaussian')
     parser.add_argument('-df', '--disable-filter', action='store_true')
     parser.add_argument('-k', '--kde-factor', default=0.75, type=float)
+    parser.add_argument('--no-wandb', action='store_true')
     return vars(parser.parse_args())
 
 def find_matching_runs(hyper_params):
@@ -484,6 +491,7 @@ def init_model_run(args):
 
 if __name__=='__main__':
     args = parse_args()
-    init_model_run(args)
+    if not args['no_wandb']:
+        init_model_run(args)
 
     main(args)
