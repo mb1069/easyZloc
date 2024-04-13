@@ -10,7 +10,6 @@ import shutil
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 
 VERSION = '0.16'
 CHANGE_NOTES = 'Fixing validation system'
@@ -39,7 +38,7 @@ from tensorflow.keras import Sequential, layers
 from vit_keras import vit
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, KBinsDiscretizer
+from sklearn.preprocessing import StandardScaler, KBinsDiscretizer, MinMaxScaler
 
 import scipy.optimize as opt
 from sklearn.metrics import mean_absolute_error
@@ -103,7 +102,7 @@ def stratify_data(locs, args):
 
 # Withold some PSFs for evaluation
 
-def split_train_val_test(psfs, locs, ys):
+def split_train_val_test(psfs, locs, ys, args):
 
     def get_sub_ds(psfs, xy_coords, ys, idx):
         psfs_idx = psfs[idx]
@@ -160,8 +159,8 @@ def filter_zranges(train_data, val_data, test_data, args):
 
 
 
-def norm_xy_coords(X_train, X_val, X_test):
-    scaler = StandardScaler()
+def norm_xy_coords(X_train, X_val, X_test, args):
+    scaler = MinMaxScaler()
     X_train[1] = scaler.fit_transform(X_train[1])
     X_val[1] = scaler.transform(X_val[1])
     X_test[1] = scaler.transform(X_test[1])
@@ -575,7 +574,7 @@ def prepare_data(args):
     stacks, locs, zs = load_data(args)
 
     locs = stratify_data(locs, args)
-    train, val, test = split_train_val_test(stacks, locs, zs)
+    train, val, test = split_train_val_test(stacks, locs, zs, args)
 
     if args['ext_test_dataset']:
         test_imgs, test_xy, y_test = load_ext_test_dataset(args)
@@ -587,7 +586,7 @@ def prepare_data(args):
 
     # X_train, y_train = aug_train_data(X_train, y_train, args)
 
-    X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test)
+    X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test, args)
 
     print('Train pixel vals', X_train[0].min(), X_train[0].max())
     print('Val pixel vals', X_val[0].min(), X_val[0].max())
@@ -666,7 +665,6 @@ def main(args):
         train_data, val_data, test_data, locs = prepare_data(args)
         save_copy_training_script(args['outdir'])
         model = train_model(train_data, val_data, args)
-
     else:
         train_data = load_dataset('train', args)
         val_data = load_dataset('val', args)
@@ -674,7 +672,7 @@ def main(args):
         model = load_model(args)
         stacks, locs, zs = load_data(args)
         # Used to regen train/val/test split in locs file
-        split_train_val_test(stacks, locs, zs)
+        split_train_val_test(stacks, locs, zs, args)
 
     if args['ext_test_dataset']:
         wandb.log({'ext_test_mae':  get_test_error(model, test_data)})

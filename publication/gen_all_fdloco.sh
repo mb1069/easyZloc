@@ -7,25 +7,39 @@ DEFAULT_LOCS='/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_
 DEFAULT_SPOTS='/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_spots.hdf5';
 PICKED='/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_locs_picked.hdf5';
 
+BRIGHTNESS=0
+GAUSS=0
+
+source ~/anaconda3/etc/profile.d/conda.sh
+MODEL_DIR=$OUTDIR/out_roll_alignment
+OUT_NUP=$OUTDIR/out_roll_alignment/out_nup
+
 
 source ~/anaconda3/etc/profile.d/conda.sh
 
-echo "Preparing data...";
-conda activate picasso;
-echo python3 /home/miguel/Projects/smlm_z/publication/prep_data.py $BEADS_DIR -z $ZSTEP -px $PX_SIZE --debug;
-mkdir $OUTDIR;
+# echo "Preparing data...";
+# conda activate picasso;
+# echo python3 ~/publication/prep_data.py $BEADS_DIR -z $ZSTEP -px $PX_SIZE --debug;
+mkdir -p $OUTDIR;
 cp $BEADS_DIR/combined/* $OUTDIR/;
 
-echo "Training model...";
+set -e 
+
+
+
 conda activate smlm_z;
-cd $OUTDIR && echo $PWD &&
-python3  /home/miguel/Projects/smlm_z/publication/train_model_debug.py -o out_roll_alignment --aug_ratio 2 --brightness 0.01 --gauss 0.001;
 
-echo "Localising experimental data..."
-cd $OUTDIR/out_roll_alignment && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py -l $DEFAULT_LOCS -s $DEFAULT_SPOTS -p $PICKED -mo . -o out_nup;
-cd $OUTDIR/out_roll_alignment/out_nup && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUTDIR/out_roll_alignment/out_nup/locs_3d.hdf5 -px $PX_SIZE -p $PICKED;
+# echo "Training model...";
+# cd $OUTDIR && echo $PWD &&
+# python3 /home/miguel/Projects/smlm_z/publication/train_model.py --norm frame --system ries --dataset $BEADS_DIR -o $MODEL_DIR --aug-brightness $BRIGHTNESS --aug-gauss $GAUSS;
 
-echo "Generate Ries comparison data"
-python3 /home/miguel/Projects/smlm_z/publication/fd_loco_accuracy_comparison.py $OUTDIR;
+
+
+# echo "Localising experimental data..."
+# cd $OUTDIR/out_roll_alignment && echo $PWD &&
+# python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py -l $DEFAULT_LOCS -s $DEFAULT_SPOTS -p $PICKED -mo . -o out_nup;
+# cd $OUTDIR/out_roll_alignment/out_nup && echo $PWD &&
+# python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUTDIR/out_roll_alignment/out_nup/locs_3d.hdf5 -px $PX_SIZE -p $PICKED;
+
+# echo "Generate Ries comparison data"
+# python3 /home/miguel/Projects/smlm_z/publication/fd_loco_accuracy_comparison.py $OUTDIR;
