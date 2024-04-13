@@ -699,10 +699,10 @@ def parse_args():
     parser.add_argument('--debug', action='store_true', help='Train on subset of data for fewer iterations')
     parser.add_argument('--seed', default=42, type=int, help='Random seed (for consistent results)')
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)', default=1024)
-    parser.add_argument('--aug-brightness', type=float, help='Brightness')
-    parser.add_argument('--aug-gauss', type=float, help='Gaussian')
+    parser.add_argument('--aug-brightness', type=float, help='Brightness', default=0)
+    parser.add_argument('--aug-gauss', type=float, help='Gaussian', default=0)
     parser.add_argument('--norm')
-    parser.add_argument('--aug-poisson-lam', type=float, help='Poisson noise lam')
+    parser.add_argument('--aug-poisson-lam', type=float, help='Poisson noise lam', default=0)
 
     parser.add_argument('--dense1', type=int, default=128)
     parser.add_argument('--dense2', type=int, default=64)

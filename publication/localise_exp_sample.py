@@ -198,7 +198,7 @@ def pred_z(model, spots, coords, outdir):
 
     fake_z = np.zeros((coords.shape[0],))
     exp_z = tf.data.Dataset.from_tensor_slices(fake_z)
-    print(spots.shape)
+    print('spots', spots.shape)
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
 
     BATCH_SIZE = 2048
@@ -248,7 +248,7 @@ def write_report_data(args):
 
 
 def extract_fov(spots, locs):
-    print(locs.shape)
+    print('fov', locs.shape)
     idx = np.argwhere((XLIM[0]<locs['x']) & (XLIM[1]>locs['x']) & (YLIM[0]<locs['y']) & (YLIM[1]>locs['y'])).squeeze()
     spots = spots[idx]
     locs = locs.iloc[idx]
