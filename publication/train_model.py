@@ -160,7 +160,7 @@ def filter_zranges(train_data, val_data, test_data, args):
 
 
 def norm_xy_coords(X_train, X_val, X_test, args):
-    scaler = MinMaxScaler()
+    scaler = MinMaxScaler(feature_range=(0,1))
     X_train[1] = scaler.fit_transform(X_train[1])
     X_val[1] = scaler.transform(X_val[1])
     X_test[1] = scaler.transform(X_test[1])
@@ -169,6 +169,13 @@ def norm_xy_coords(X_train, X_val, X_test, args):
     joblib.dump(scaler, outpath) 
 
     return X_train, X_val, X_test
+
+def norm_z_coords(y_train, y_val, y_test, args):
+    rescale = args['zrange']
+    y_train = y_train / rescale
+    y_val = y_val / rescale
+    y_test = y_test / rescale
+    return y_train, y_val, y_test
 
 
 options = tf.data.Options()
@@ -249,13 +256,21 @@ def get_model(args):
         'vit_b32': vit.vit_b32,
         'vit_l16': vit.vit_l16,
         'vit_l32': vit.vit_l32,
+        'mobilenet': keras.applications.MobileNetV3Small,
+        'mobilenet_large': keras.applications.MobileNetV3Large,
+        'vgg': keras.applications.VGG19
     }[args['architecture']]
 
-    vit_model = model_version(image_size=image_size, 
-                            activation='sigmoid',
-                            pretrained=True,
-                            include_top=False,
-                            pretrained_top=False)
+    if 'vit' in args['architecture']:
+        vit_model = model_version(image_size=image_size, 
+                                activation='sigmoid',
+                                pretrained=True,
+                                include_top=False,
+                                pretrained_top=False)
+    else:
+        vit_model = model_version(input_shape=imshape,
+                                  weights='imagenet',
+                                  include_top=False)
 
     x = vit_model(img_aug_out)
     # Add additional layers for regression prediction
@@ -587,6 +602,7 @@ def prepare_data(args):
     # X_train, y_train = aug_train_data(X_train, y_train, args)
 
     X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test, args)
+    # y_train, y_val, y_test = norm_z_coords(y_train, y_val, y_test, args)
 
     print('Train pixel vals', X_train[0].min(), X_train[0].max())
     print('Val pixel vals', X_val[0].min(), X_val[0].max())
@@ -608,9 +624,9 @@ def prepare_data(args):
     val_data = get_dataset(X_val, y_val, args)
     test_data = get_dataset(X_test, y_test, args)
 
-    train_data = preprocess_img_dataset(train_data)
-    val_data = preprocess_img_dataset(val_data)
-    test_data = preprocess_img_dataset(test_data)
+    train_data = preprocess_img_dataset(train_data, args)
+    val_data = preprocess_img_dataset(val_data, args)
+    test_data = preprocess_img_dataset(test_data, args)
 
     train_data = prep_dataset(train_data)
     val_data = prep_dataset(val_data)
@@ -628,11 +644,16 @@ def prepare_data(args):
 def load_ext_test_dataset(args):
     stacks = os.path.join(args['ext_test_dataset'], 'combined', 'stacks.ome.tif')
     locs = os.path.join(args['ext_test_dataset'], 'combined', 'locs.hdf')
+    config = os.path.join(args['ext_test_dataset'], 'combined', 'stacks_config.json')
+
+    with open(config) as f:
+        config = json.load(f)
+
     args = {
         'stacks': stacks,
         'locs': locs,
         'debug': False,
-        'zstep': 10
+        'zstep': config['gen_args']['zstep']
     }
     psfs, locs, zs = load_data(args)
 
@@ -699,7 +720,7 @@ def parse_args():
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)', default=1024)
     parser.add_argument('--aug-brightness', type=float, help='Brightness', default=0)
     parser.add_argument('--aug-gauss', type=float, help='Gaussian', default=0)
-    parser.add_argument('--norm')
+    parser.add_argument('--norm', default='frame-min')
     parser.add_argument('--aug-poisson-lam', type=float, help='Poisson noise lam', default=0)
 
     parser.add_argument('--dense1', type=int, default=128)
@@ -725,8 +746,9 @@ def parse_args():
 
     with open(args['stacks_config']) as f:
         d = json.load(f)
+
     args.update(d)
-    print(args)
+    
     for k, v in args.items():
         print(f'{k}: {v}')
 
@@ -757,7 +779,9 @@ def init_wandb(args):
 
 if __name__ == '__main__':
     args = parse_args()
-
+    
+    if os.path.exists(args['outdir']):
+        shutil.rmtree(args['outdir'])
     os.makedirs(args['outdir'], exist_ok=True)
 
     tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
