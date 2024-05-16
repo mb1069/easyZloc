@@ -3,6 +3,20 @@ import matplotlib.pyplot as plt
 from tensorflow import keras
 import os
 import tensorflow as tf
+import numpy as np
+from PIL import Image
+
+
+def read_multipage_tif(impath):
+    print(f'Reading {impath} using PIL')
+    d = Image.open(impath)
+    n_frames = d.n_frames
+    shape = np.array(d).shape
+    img = np.zeros((n_frames, *shape))
+    for i in range(n_frames):
+        d.seek(i)
+        img[i] = np.array(d)
+    return img
 
 def norm_zero_one(s):
     return (s - s.min()) / (s.max() - s.min())
@@ -76,20 +90,28 @@ def apply_resizing(img_xy, z):
     return tuple(img_xy), z
 
 
+from functools import partial
 
-def apply_img_norm(img_xy, z):
+def _apply_img_norm(img_xy, z, args):
     img_xy = list(img_xy)
     imgs = img_xy[0]
-    means = tf.math.reduce_mean(imgs, axis=(1,2,3), keepdims=True)
+    if args['norm'] == 'frame-mean':
+        func = tf.math.reduce_mean
+    elif args['norm'] == 'frame-min':
+        func = tf.math.reduce_min
+    else:
+        raise NotImplementedError()
+    means = func(imgs, axis=(1,2,3), keepdims=True)
     imgs -= means
     maxs = tf.math.reduce_max(imgs, axis=(1,2,3), keepdims=True)
     imgs = tf.nn.relu(imgs / maxs)
     return (imgs, img_xy[1]), z
 
 
-def preprocess_img_dataset(dataset, batch_size=None):
+def preprocess_img_dataset(dataset, args):
+    apply_img_norm = partial(_apply_img_norm, args=args)
     dataset = dataset.map(apply_resizing, num_parallel_calls=tf.data.AUTOTUNE)
-    if batch_size:
-        dataset = dataset.batch(batch_size)
+    # if args.get('batch_size'):
+    #     dataset = dataset.batch(args['batch_size'])
     dataset = dataset.map(apply_img_norm, num_parallel_calls=tf.data.AUTOTUNE)
     return dataset
