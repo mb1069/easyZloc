@@ -8,6 +8,8 @@ sys.path.append(cwd)
 if not os.environ.get('CUDA_VISIBLE_DEVICES'):
     os.environ['CUDA_VISIBLE_DEVICES']='0'
 
+os.environ['CUDA_VISIBLE_DEVICES']=''
+
 import joblib
 import json
 import shutil
@@ -16,27 +18,19 @@ import pandas as pd
 import h5py
 import numpy as np
 import seaborn as sns
-import matplotlib
-matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from picasso import io
+import yaml
 
-from util.util import grid_psfs, preprocess_img_dataset
+from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm
 
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
 
 VERSION = '0.1'
-
-
-
-# Picasso localisation parameters
-BASELINE = 100
-SENSITIVITY = 0.45
-GAIN = 1
-
 
 DEFAULT_LOCS = None
 DEFAULT_SPOTS = None
@@ -95,51 +89,51 @@ XLIM, YLIM = None, None
 # YLIM = 500, 1000
 
 
-def norm_whole_image(psfs):
-    psfs = psfs - psfs.min()
-    psfs = psfs / psfs.max()
-    return psfs
+# def norm_whole_image(psfs):
+#     psfs = psfs - psfs.min()
+#     psfs = psfs / psfs.max()
+#     return psfs
 
 
-def norm_psf_stack(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min()
-        psfs[i] = psfs[i] - psf_min
-        psf_max = psfs[i].max()
-        psfs[i] = psfs[i] / psf_max
+# def norm_psf_stack(psfs):
+#     for i in range(psfs.shape[0]):
+#         psf_min = psfs[i].min()
+#         psfs[i] = psfs[i] - psf_min
+#         psf_max = psfs[i].max()
+#         psfs[i] = psfs[i] / psf_max
 
-    psfs[psfs<0] = 0
-    return psfs
-
-
-def norm_psf_frame(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(keepdims=True)
-        psfs[i] = psfs[i] - psf_min
-        psf_max = psfs[i].max(keepdims=True)
-        psfs[i] = psfs[i] / psf_max
-
-    psfs[psfs<0] = 0
-    return psfs
+#     psfs[psfs<0] = 0
+#     return psfs
 
 
-def norm_frame_sum(psfs):
-    for i in range(psfs.shape[0]):
-        psf_min = psfs[i].min(keepdims=True)
-        psfs[i] = psfs[i] - psf_min
-        psf_sum = psfs[i].sum()
-        psfs[i] = psfs[i] / psf_sum
+# def norm_psf_frame(psfs):
+#     for i in range(psfs.shape[0]):
+#         psf_min = psfs[i].min(keepdims=True)
+#         psfs[i] = psfs[i] - psf_min
+#         psf_max = psfs[i].max(keepdims=True)
+#         psfs[i] = psfs[i] / psf_max
 
-    psfs[psfs<0] = 0
-    return psfs  
+#     psfs[psfs<0] = 0
+#     return psfs
 
 
-norm_funcs = {
-        'frame': norm_psf_frame,
-        'stack': norm_psf_frame,
-        'image': norm_whole_image,
-        'sum': norm_frame_sum
-}
+# def norm_frame_sum(psfs):
+#     for i in range(psfs.shape[0]):
+#         psf_min = psfs[i].min(keepdims=True)
+#         psfs[i] = psfs[i] - psf_min
+#         psf_sum = psfs[i].sum()
+#         psfs[i] = psfs[i] / psf_sum
+
+#     psfs[psfs<0] = 0
+#     return psfs  
+
+
+# norm_funcs = {
+#         'frame': norm_psf_frame,
+#         'stack': norm_psf_frame,
+#         'image': norm_whole_image,
+#         'sum': norm_frame_sum
+# }
 
 
 def write_arg_log(args):
@@ -171,40 +165,40 @@ def gen_example_spots(spots, outdir):
     plt.close()
 
 
-def apply_coords_norm(locs, spots, args):
+def apply_coords_norm(coords, args):
     print('Applying pre-processing')
     scaler = joblib.load(args['coords_scaler'])
 
-    coords = scaler.transform(locs[['x', 'y']].to_numpy())
-    # spots = datagen.standardize(spots.astype(np.float32))[:, :, :, np.newaxis]
+    coords = scaler.transform(coords)
 
-    return coords, spots
-
+    return coords
 
 
-def pred_z(model, spots, coords, outdir):
+def pred_z(model, spots, coords, args, zrange, im_size, img_norm):
     spots = spots.astype(np.float32)[:, :, :, np.newaxis]
     print('Predicting z locs')
 
-
+    print('Coords value range:', coords.min(), coords.max())
     exp_spots = tf.data.Dataset.from_tensor_slices(spots)
-    exp_coords = tf.data.Dataset.from_tensor_slices(coords)
+    exp_coords = tf.data.Dataset.from_tensor_slices(coords.astype(np.float32))
 
     exp_X = tf.data.Dataset.zip((exp_spots, exp_coords))
 
     fake_z = np.zeros((coords.shape[0],))
     exp_z = tf.data.Dataset.from_tensor_slices(fake_z)
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
-
+    
     BATCH_SIZE = 2048
+    exp_data = exp_data.batch(BATCH_SIZE)
+    exp_data = preprocess_img_dataset(exp_data, im_size, img_norm)
 
-    exp_data = preprocess_img_dataset(exp_data, BATCH_SIZE)
-    pred_z = model.predict(exp_data, batch_size=BATCH_SIZE, workers=4)
+    pred_z = model.predict(exp_data) * zrange
 
     sns.histplot(pred_z)
-    plt.savefig(os.path.join(outdir, 'z_histplot.png'))
+    plt.savefig(os.path.join(args['outdir'], 'z_histplot.png'))
     plt.close()
     return pred_z
+
 
 def write_locs(locs, z_coords, args):
     locs['z [nm]'] = z_coords
@@ -214,6 +208,8 @@ def write_locs(locs, z_coords, args):
     locs['y [nm]'] = locs['y'] * args['pixel_size']
 
     locs_path = os.path.join(args['outdir'], 'locs_3d.hdf5')
+    if 'index' in list(locs):
+        del locs['index']
     with h5py.File(locs_path, "w") as locs_file:
         locs_file.create_dataset("locs", data=locs.to_records())
 
@@ -262,24 +258,57 @@ def tmp_filter_locs(new_locs, spots, args):
     # spots = spots[idx]
     return merge_locs, spots
 
+def get_model_output_scale(model_report):
+    return model_report['args']['zrange']
+    
+
+def get_model_imsize(model_report):
+    return model_report['args'].get('imsize') or 64
+
+
+def read_exp_pixel_size(args):
+    yaml_file = args['locs'].replace('.hdf5', '.yaml')
+    print(yaml_file)
+    with open(yaml_file) as f:
+        docs = list(yaml.safe_load_all(f))
+    
+    d = dict()
+    for d2 in docs:
+        d.update(d2)
+
+    return d['Pixelsize']
+
+
 def main(args):
+
+    args['pixel_size'] = read_exp_pixel_size(args)
+
+    model_report = get_model_report(args['model_dir'])
+
+    img_norm = get_model_img_norm(model_report)
+    print(img_norm)
+
+    im_size = get_model_imsize(model_report)
+
+    zrange = get_model_output_scale(model_report)
     write_report_data(args)
 
     mirrored_strategy = tf.distribute.MirroredStrategy()
 
     with mirrored_strategy.scope():
+        # model = tf.saved_model.load(args['model'])
         model = tf.keras.models.load_model(args['model'])
-    
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
 
     with h5py.File(args['spots'], 'r') as f:
         spots = np.array(f['spots']).astype(np.uint16)
 
-    spots = (spots * GAIN / SENSITIVITY) + BASELINE
+    spots = (spots * args['gain'] / args['sensitivity']) + args['baseline']
 
     # TODO remove temp subset of locs
     if args['picked_locs']:
+        print(args['picked_locs'])
         locs, spots = tmp_filter_locs(locs, spots, args)
 
     assert locs.shape[0] == spots.shape[0]
@@ -288,9 +317,9 @@ def main(args):
 
     gen_2d_plot(locs, args['outdir'])
     gen_example_spots(spots, args['outdir'])
-    coords, spots = apply_coords_norm(locs, spots, args)
+    coords = apply_coords_norm(locs[['x', 'y']].to_numpy(), args)
 
-    z_coords = pred_z(model, spots, coords, args['outdir'])
+    z_coords = pred_z(model, spots, coords, args, zrange, im_size, img_norm)
 
     write_locs(locs, z_coords, args)
 
@@ -305,6 +334,8 @@ def preprocess_args(args):
 
     args['locs'] = os.path.abspath(args['locs'])
     args['spots'] = os.path.abspath(args['spots'])
+    if not os.path.exists(args['outdir']):
+        os.makedirs(args['outdir'])
     return args
 
 
@@ -318,9 +349,14 @@ def parse_args():
     parser.add_argument('-s', '--spots', help='Spots file from Picasso', required=True)
     parser.add_argument('-p', '--picked-locs', help='Localisations picked from Locs file using Picasso')
 
-    parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, required=True)
+    # parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, required=True)
     parser.add_argument('-o', '--outdir', help='Output dir', default='./out')
-    parser.add_argument('--norm')
+    # parser.add_argument('--norm', required=True, choices=['frame-min', 'frame-mean'])
+
+    parser.add_argument('--baseline', type=int, default=100, help='From picasso loc parameters')
+    parser.add_argument('--sensitivity', type=int, default=0.45, help='From picasso loc parameters')
+    parser.add_argument('--gain', type=int, default=1, help='From picasso loc parameters')
+
     args = parser.parse_args()
     args = vars(parser.parse_args())
 
@@ -331,21 +367,12 @@ def parse_args():
     write_arg_log(args)
     save_copy_script(args['outdir'])
     
-
-    for k, v in args.items():
-        if v is None:
-            continue
-        if k in ['pixel_size', 'norm']:
-            continue
-        try:
-            assert os.path.exists(v)
-        except Exception:
-            print(f'{k}:{v} not found')
-            quit()
     return args
 
 
 if __name__=='__main__':
+    import matplotlib
+    matplotlib.use('Agg')
     args = parse_args()
     main(args)
 

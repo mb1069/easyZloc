@@ -76,18 +76,13 @@ norm_funcs = {
 }
 
 
-def apply_normalisation(coords, spots, args):
+def apply_coords_normalisation(coords, args):
     print('Applying pre-processing')
     scaler = joblib.load(args['coords_scaler'])
 
-    spots = spots.astype(np.float32)
-
-    # norm_func = norm_funcs[args['norm']]
-    # spots = norm_func(spots)
-
     coords = scaler.transform(coords)
 
-    return coords, spots
+    return coords
 
 
 def pred_z(model, spots, coords):
@@ -98,6 +93,7 @@ def pred_z(model, spots, coords):
     exp_spots = tf.data.Dataset.from_tensor_slices(spots)
     exp_coords = tf.data.Dataset.from_tensor_slices(coords)
 
+
     exp_X = tf.data.Dataset.zip((exp_spots, exp_coords))
 
     fake_z = np.zeros((coords.shape[0],))
@@ -106,7 +102,8 @@ def pred_z(model, spots, coords):
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
 
     BATCH_SIZE = 2048
-    exp_data = preprocess_img_dataset(exp_data, BATCH_SIZE)
+    exp_data = exp_data.batch(BATCH_SIZE)
+    exp_data = preprocess_img_dataset(exp_data, args)
 
     pred_z = model.predict(exp_data, batch_size=BATCH_SIZE, workers=4)
 
@@ -204,15 +201,20 @@ def eval_dataset_without_const_bias(coords, zs, z_pred, dname):
     errors = np.concatenate(errors)
 
     mae = np.mean(errors)
-    plt.savefig('./tmp.png')
+    fpath = f'./{dname}.png'
+    plt.savefig(fpath)
     plt.close()
     wandb.log({
-        f'{dname}_p3' : wandb.Image('./tmp.png'), 
+        f'{dname}_p3' : wandb.Image(fpath), 
         f'{dname}_error': mae, 
         f'{dname}_correl': correl
     })
 
 
+def get_dataset_zstep(config_path):
+    with open(config_path) as f:
+        config = json.load(f)
+    return config['zstep']
 
 def main(args):
 
@@ -224,16 +226,19 @@ def main(args):
         model = tf.keras.models.load_model(args['model'])
     
 
-    for locs, psfs in args['datasets']:
-        dname = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(locs), os.pardir)))
-        locs = pd.read_hdf(locs, key='locs')
-        psfs = imread(psfs)
+    for locs_path, psfs_path in args['datasets']:
+        dname = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(locs_path), os.pardir)))
+        stacks_config = os.path.join(os.path.dirname(locs_path), 'stacks_config.json')
+
+        locs = pd.read_hdf(locs_path, key='locs')
+        psfs = imread(psfs_path)
+        z_step = float(get_dataset_zstep(stacks_config))
         zs = []
 
         xy_coords = []
 
         for offset in locs['offset']:
-            z = ((np.arange(psfs.shape[1])) * args['zstep']) - offset
+            z = ((np.arange(psfs.shape[1])) * z_step) - offset
             zs.append(z)
 
         for xy in locs[['x', 'y']].to_numpy():
@@ -243,7 +248,7 @@ def main(args):
         zs = np.array(zs)
 
         zs = np.concatenate(zs)
-        spots = np.concatenate(psfs)[:, :, :, np.newaxis]
+        spots = np.concatenate(psfs)[:, :, :, np.newaxis].astype(np.float32)
         coords = np.concatenate(xy_coords)
 
         idx = np.argwhere(abs(zs)<1000).squeeze()
@@ -251,7 +256,7 @@ def main(args):
         spots = spots[idx]
         zs = zs[idx]
 
-        coords, spots = apply_normalisation(coords, spots, args)
+        coords = apply_coords_normalisation(coords, args)
 
 
         z_pred = pred_z(model, spots, coords).squeeze()
@@ -296,8 +301,7 @@ def parse_args():
     parser.add_argument('-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
     parser.add_argument('-c', '--coords-scaler', help='2D coordinate rescaler')
     parser.add_argument('--datasets', required=True, nargs='+')
-    parser.add_argument('--norm', default='frame')
-    parser.add_argument('--zstep', default=10, type=int)
+    parser.add_argument('--norm', required=True, choices=['frame-min', 'frame-mean'])
     args = parser.parse_args()
     args = vars(parser.parse_args())
 

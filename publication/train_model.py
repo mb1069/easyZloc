@@ -1,15 +1,22 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
 
 import sys, os
 import json
 import shutil
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers, Sequential
+from tensorflow.keras import optimizers
+from keras.callbacks import ReduceLROnPlateau, EarlyStopping, Callback
+from tensorflow.keras.layers import Input, Dense, Flatten, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras import Sequential, layers
+# from tensorflow.keras import mixed_precision
+# mixed_precision.set_global_policy('mixed_float16')
 
+from vit_keras import vit
+from keras import backend as K
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
-
 
 VERSION = '0.16'
 CHANGE_NOTES = 'Fixing validation system'
@@ -20,22 +27,12 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset, image_size
+from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset
 from tifffile import imread
 import pandas as pd
 from tqdm import tqdm
 import wandb
 from wandb.integration.keras import WandbMetricsLogger
-
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers, Sequential
-from tensorflow.keras import optimizers
-from keras.callbacks import ReduceLROnPlateau, EarlyStopping, Callback
-from tensorflow.keras.layers import Input, Dense, Flatten, Dropout
-from tensorflow.keras.models import Model
-from tensorflow.keras import Sequential, layers
-from vit_keras import vit
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, KBinsDiscretizer, MinMaxScaler
@@ -48,19 +45,20 @@ import gc
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
-import tensorflow as tf
+
 
 
 def load_data(args):
-    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis].astype(float)
+    psfs = imread(args['stacks'])[:, :, :, :, np.newaxis].astype(np.float32)
     locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
 
+
+    # TODO undo
     if args['debug']:
         idx = np.arange(psfs.shape[0])
         np.random.seed(42)
-        idx = np.random.choice(idx, 2000)
-        idx = idx[0:100]
+        idx = np.random.choice(idx, 100)
         psfs = psfs[idx]
         locs = locs.iloc[idx]
 
@@ -133,9 +131,9 @@ def split_train_val_test(psfs, locs, ys, args):
     locs['ds'] = ds_cls
     plt.rcParams['figure.figsize'] = [5, 5]
 
-    print(train_psfs.shape, train_coords.shape, train_ys.shape)
-    print(val_psfs.shape, val_coords.shape, val_ys.shape)
-    print(test_psfs.shape, test_coords.shape, test_ys.shape)
+    print('Train data', train_psfs.shape, train_coords.shape, train_ys.shape)
+    print('Val data', val_psfs.shape, val_coords.shape, val_ys.shape)
+    print('Test data', test_psfs.shape, test_coords.shape, test_ys.shape)
 
     return (train_psfs, train_coords, train_ys), (val_psfs, val_coords, val_ys), (test_psfs, test_coords, test_ys)
 
@@ -161,10 +159,18 @@ def filter_zranges(train_data, val_data, test_data, args):
 
 def norm_xy_coords(X_train, X_val, X_test, args):
     scaler = MinMaxScaler(feature_range=(0,1))
-    X_train[1] = scaler.fit_transform(X_train[1])
+    full_fov_data = [[0, 0], [args['xsize'], args['ysize']]]
+    scaler.fit(full_fov_data)
+    X_train[1] = scaler.transform(X_train[1])
     X_val[1] = scaler.transform(X_val[1])
     X_test[1] = scaler.transform(X_test[1])
 
+    for dataset in (X_train[1], X_val[1], X_test[1]):
+        try:
+            assert dataset.min() >= 0
+            assert dataset.max() <= 1
+        except AssertionError as e:
+            raise AssertionError('XY coordinates out of range, check training data')
     outpath = os.path.join(args['outdir'], 'scaler.save')
     joblib.dump(scaler, outpath) 
 
@@ -182,7 +188,7 @@ options = tf.data.Options()
 options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
 
 
-def get_dataset(X, y, args, shuffle=False):
+def get_dataset(X, y):
     images, coords = X
     img_ds = tf.data.Dataset.from_tensor_slices(images.astype(np.float32))
     coords_ds = tf.data.Dataset.from_tensor_slices(coords.astype(np.float32))
@@ -190,21 +196,18 @@ def get_dataset(X, y, args, shuffle=False):
 
     x_ds = tf.data.Dataset.zip(img_ds, coords_ds)
     ds = tf.data.Dataset.zip(x_ds, labels_ds)
-    ds = ds.batch(args['batch_size'])
-    if shuffle:
-        ds = ds.shuffle(buffer_size=int(args['batch_size']*1.5), seed=args['seed'])
-    print('Created dataset')
-    ds = ds.with_options(options)
     return ds
 
 
-def prep_dataset(dataset):
-    return dataset.cache().prefetch(tf.data.AUTOTUNE)
+def prep_dataset(ds, args, shuffle=False):
+    ds = ds.cache()
+    if shuffle:
+        ds = ds.shuffle(buffer_size=int(args['batch_size']*1.5), seed=args['seed'])
+    ds = ds.batch(args['batch_size'])
+    ds = ds.with_options(options)
+    ds = ds.prefetch(tf.data.AUTOTUNE)
+    return ds
 
-
-# Assuming your input images have size (image_size, image_size, num_channels)
-num_channels = 3
-num_classes = 1  # Regression task, predicting a single continuous value
 
 
 class RandomPoissonNoise(layers.Layer):
@@ -225,26 +228,51 @@ class RandomPoissonNoise(layers.Layer):
         return input + noise
 
 
+class RandomGaussianNoise(keras.layers.Layer):
+    def __init__(self, mean_range=(-0.1, 0.1), std_range=(0.0, 0.5), **kwargs):
+        super(RandomGaussianNoise, self).__init__(**kwargs)
+        self.mean_range = mean_range
+        self.std_range = std_range
+
+    def call(self, inputs, training=None):
+        if training:
+            # Draw random mean and std values from the specified ranges
+            means = tf.random.uniform(shape=(1,), minval=self.mean_range[0], maxval=self.mean_range[1])[0]
+            stds = tf.random.uniform(shape=(1,), minval=self.std_range[0], maxval=self.std_range[1])[0]
+            noise = tf.random.normal(shape=tf.shape(inputs), mean=means, stddev=stds)
+            output = noise + inputs
+            maxs = tf.math.reduce_max(output, axis=(1,2,3), keepdims=True)
+            return tf.nn.relu(output / maxs)
+        else:
+            return inputs
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "mean_range": self.mean_range,
+            "std_range": self.std_range,
+        })
+        return config
+
+
 def get_model(args):
-    # Create the Vision Transformer model using the vit_keras library
-    imshape = (image_size, image_size, num_channels)
+    imshape = (args['image_size'], args['image_size'], 1)
+
     img_input = Input(shape=imshape)
+    # RGB used for compatibility with pretrained weights
+    img_rgb = tf.image.grayscale_to_rgb(img_input)
 
     if not (args['aug_gauss'] or args['aug_brightness']):
-        img_aug_out = img_input
+        img_aug_out = img_rgb
     else:
         extra_aug = Sequential([], name='extra_aug')
-
         if args['aug_gauss']:
             extra_aug.add(layers.GaussianNoise(stddev=args['aug_gauss'], seed=args['seed']))
 
         if args['aug_brightness']:
             extra_aug.add(layers.RandomBrightness(args['aug_brightness'], value_range=[0, 1], seed=args['seed']))
             
-        # layers.RandomTranslation(1/imshape[0], 1/imshape[0], seed=args['seed']),
-        if args['aug_poisson_lam']:
-            extra_aug.add(RandomPoissonNoise(imshape, 1, args['aug_poisson_lam'], seed=args['seed']))
-        img_aug_out = extra_aug(img_input)
+        img_aug_out = extra_aug(img_rgb)
     
     coords_input = layers.Input((2,))
     x_coords = layers.Dense(64)(coords_input)
@@ -258,29 +286,33 @@ def get_model(args):
         'vit_l32': vit.vit_l32,
         'mobilenet': keras.applications.MobileNetV3Small,
         'mobilenet_large': keras.applications.MobileNetV3Large,
-        'vgg': keras.applications.VGG19
+        'vgg': keras.applications.VGG19,
+        'resnet': keras.applications.ResNet50V2,
+        'resnet_large': keras.applications.ResNet101V2,
     }[args['architecture']]
 
-    if 'vit' in args['architecture']:
-        vit_model = model_version(image_size=image_size, 
+    if 'vit_' in args['architecture']:
+        feat_model = model_version(image_size=args['image_size'], 
                                 activation='sigmoid',
                                 pretrained=True,
                                 include_top=False,
                                 pretrained_top=False)
     else:
-        vit_model = model_version(input_shape=imshape,
+        rgb_shape = (args['image_size'], args['image_size'], 3)
+        feat_model = model_version(input_shape=rgb_shape,
                                   weights='imagenet',
                                   include_top=False)
 
-    x = vit_model(img_aug_out)
+    x = feat_model(img_aug_out)
     # Add additional layers for regression prediction
     x = Flatten()(x)
     x = tf.concat([x, x_coords], axis=-1)
     x = Dense(args['dense1'], activation='gelu')(x)
     x = Dropout(0.5)(x)
-    x = Dense(args['dense2'], activation='gelu')(x)
-    x = Dropout(0.5)(x)
-    regression_output = Dense(num_classes, activation='linear')(x)  # Linear activation for regression
+    if args['dense2'] != 0:
+        x = Dense(args['dense2'], activation='gelu')(x)
+        x = Dropout(0.5)(x)
+    regression_output = Dense(1, activation='tanh')(x)  # Linear activation for regression
     model = Model(inputs=[img_input, coords_input], outputs=regression_output)
 
     aug_model = Model(inputs=img_input, outputs=img_aug_out)
@@ -302,9 +334,10 @@ def bestfit_error(z_true, z_pred):
 
 
 class ValidationCallback(Callback):
-    def __init__(self, val_data):
+    def __init__(self, val_data, z_mult):
         super(Callback, self).__init__()
         self.val_data = val_data
+        self.z_mult = z_mult
         images = []
         coords = []
         z = []
@@ -315,13 +348,13 @@ class ValidationCallback(Callback):
 
         self.images = np.concatenate(images)
         self.coords = np.concatenate(coords)
-        self.z = np.concatenate(z)
+        self.z = np.concatenate(z)  * self.z_mult
 
         self.coords2 = np.array(['_'.join(x.astype(str)) for x in self.coords.astype(str)])
         self.coords_groups = {c: np.argwhere(self.coords2 == c).squeeze() for c in set(self.coords2)}
 
     def on_epoch_end(self, epoch, logs):
-        preds = self.model.predict(self.val_data, batch_size=N_GPUS * 4096, verbose=False).squeeze()
+        preds = self.model.predict(self.val_data, batch_size=N_GPUS * 4096, verbose=False).squeeze() * self.z_mult
         errors = []
 
         for group, idx in self.coords_groups.items():
@@ -358,25 +391,12 @@ def gen_example_aug_imgs(aug_model, train_data, args):
 
 
 def train_model(train_data, val_data, args):
-    epochs = 3 if args['debug'] else 5000
+    epochs = 3 if args['debug'] else 1000
     lr = args['learning_rate']
     print(f'N epochs: {epochs}')
 
-
-    # Transfer learning
-    # n_layers = len(model.layers)
-    # for i in range(0, len(model.layers)-4):
-    #     model.layers[i].trainable = False
-    # assert model.trainable == True
-
-    
-    # # Print a summary of the model architecture
-    # model.summary()
-
-    # # # Create a MirroredStrategy.
     strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
-    # # Open a strategy scope.
     with strategy.scope():
 
         # Model refining
@@ -384,23 +404,23 @@ def train_model(train_data, val_data, args):
         if args['pretrained_model']:
             model = keras.models.load_model(args['pretrained_model'])
         else:
-            # Traing from scratch
             model, aug_model = get_model(args)
             gen_example_aug_imgs(aug_model, train_data, args)
 
-        # Compile the model
-        model.compile(loss='mean_squared_error', optimizer=optimizers.AdamW(learning_rate=lr), metrics=['mean_absolute_error'])
+        opt = optimizers.AdamW(learning_rate=lr)
 
-    
+        model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mean_absolute_error'])
 
+    # tb_callback = tf.keras.callbacks.TensorBoard(log_dir=f"{args['outdir']}/tensorboard", profile_batch='10, 15')
 
     callbacks = [
-        ValidationCallback(val_data),
+        ValidationCallback(val_data, args['zrange']),
         WandbMetricsLogger(),
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
-                        patience=10, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
-        EarlyStopping(monitor='val_mean_absolute_error', patience=20,
+                        patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
+        EarlyStopping(monitor='val_mean_absolute_error', patience=10,
                     verbose=True, min_delta=1, restore_best_weights=True),
+        # tb_callback,
     ]
 
     try:
@@ -425,13 +445,13 @@ def train_model(train_data, val_data, args):
         ax2.legend(loc=0)
         fig.savefig(os.path.join(args['outdir'], 'training_curve.png'))
         plt.close()
+        print('Finished plotting history.')
 
     return model
 
 
-
 def write_report(model, locs, train_data, val_data, test_data, args):
-
+    print('Writing report')
     # Check output on all stacks
 
     tbl_data = []
@@ -447,10 +467,14 @@ def write_report(model, locs, train_data, val_data, test_data, args):
     sns.scatterplot(data=locs, x='x', y='y', hue='ds')
     plt.savefig(os.path.join(args['outdir'], 'results', 'data_split') + '.png')
     plt.close()
+    print('Wrote scatterplot')
 
-
-
-    for dirname, ds in [('train', train_data), ('val', val_data), ('test', test_data)]:
+    for dirname, ds in [
+        # ('train', train_data), 
+        ('val', val_data), 
+        ('test', test_data)
+        ]:
+        print(f'Writing results for {dirname} dataset')
         os.makedirs(os.path.join(args['outdir'], 'results', dirname), exist_ok=True)
         images = []
         coords = []
@@ -462,9 +486,11 @@ def write_report(model, locs, train_data, val_data, test_data, args):
 
         images = np.concatenate(images)
         coords = np.concatenate(coords)
-        z = np.concatenate(z)
+        z = np.concatenate(z) * args['zrange']
 
-        preds = model.predict(ds, batch_size=N_GPUS * 4096).squeeze()
+        preds = model.predict(ds, batch_size=N_GPUS * 4096).squeeze() * args['zrange']
+        print('Finished predicting...')
+
         errors = abs(preds - z.squeeze())
 
         fname = f'{dirname}_all_preds'
@@ -475,10 +501,12 @@ def write_report(model, locs, train_data, val_data, test_data, args):
         ax3 = fig.add_subplot(gs[1, 0])
         ax4 = fig.add_subplot(gs[1, 1])
 
+
         plt.title(fname)
         ax1.scatter(z, preds)
         ds_df = pd.DataFrame.from_dict({'x': coords[:, 0], 'y': coords[:, 1], 'error': errors})
         ds_df = ds_df.groupby(['x', 'y']).mean().reset_index()
+
 
         sns.scatterplot(data=ds_df, x='x', y='y', hue='error', ax=ax2)
         sns.scatterplot(data=ds_df, x='x', y='error', ax=ax3)
@@ -488,6 +516,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
         plt.savefig(outpath)
         plt.close()
         wandb.log({img_fname: wandb.Image(outpath)})
+        print('Writing plots...')
 
 
         coords2 = ['_'.join(x.astype(str)) for x in coords]
@@ -542,12 +571,6 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax5.set_xlabel('z (frame)')
             ax5.set_ylabel('pixel intensity')    
                 
-            
-            img_fname = f'{dirname}_bead' + f'_{num}.png'
-            outpath = os.path.join(args['outdir'], 'results', dirname, img_fname)
-            plt.savefig(outpath)
-            
-            plt.close()
 
             # wandb.log({img_fname: wandb.Image(outpath)})
 
@@ -561,8 +584,17 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             else:
                 offset = 0
 
+            img_fname = f'{dirname}_bead' + f'_{num}.png'
+            outpath = os.path.join(args['outdir'], 'results', dirname, img_fname)
+            plt.savefig(outpath)
+            
+            plt.close()
+            
             ds_pred_vals.extend(pred_vals)
             tbl_data.append((dirname, num,  gcoords[0][0], gcoords[1][0], mae, min(error), max(error),offset))
+
+            if num == 10 and dirname == 'train':
+                break
         
         ds_mae = mean_absolute_error(ds_true_vals, ds_pred_vals)
         report_data[dirname+'_mae'] = float(ds_mae)
@@ -584,8 +616,49 @@ def save_copy_training_script(outdir):
     outpath = os.path.join(outdir, 'train_model.py.bak')
     shutil.copy(os.path.abspath(__file__), outpath)
 
-def prepare_data(args):
 
+def add_shot_noise(image, min_poisson_lam):
+
+    factor = np.random.uniform(min_poisson_lam, 1000)
+
+    # Convert image to photon counts
+    photon_count = image * factor
+    
+    # Apply Poisson noise
+    noisy_image = np.random.poisson(photon_count.astype(int))
+    
+    # Convert back to image scale
+    return noisy_image / factor
+
+
+def aug_training_data(X_train, y_train, min_poisson_lam):
+    print('Augmenting training data...')
+    print('Data to augment', X_train[0].shape, X_train[1].shape, y_train.shape)
+    aug_imgs = []
+    aug_xy = []
+    aug_z = []
+    n_aug_points = X_train[0].shape[0] * 2
+    idx = np.random.randint(0, X_train[0].shape[0], size=n_aug_points)
+    for i in tqdm(idx):
+        img = X_train[0][i]
+        xy = X_train[1][i]
+        z = y_train[i]
+        noisy_img = add_shot_noise(img, min_poisson_lam)
+        aug_imgs.append(noisy_img)
+        aug_xy.append(xy)
+        aug_z.append(z)
+
+    aug_imgs = np.stack(aug_imgs)
+    aug_xy = np.stack(aug_xy)
+    aug_z = np.stack(aug_z)
+    X_train = np.concatenate((X_train[0], aug_imgs)), np.concatenate((X_train[1], aug_xy))
+    y_train = np.concatenate((y_train, aug_z))
+    print('Done')
+
+    return X_train, y_train
+
+
+def prepare_data(args):
     stacks, locs, zs = load_data(args)
 
     locs = stratify_data(locs, args)
@@ -597,12 +670,10 @@ def prepare_data(args):
 
     (X_train, y_train), (X_val, y_val), (X_test, y_test) = filter_zranges(train, val, test, args)
 
-    # X_train, X_val, X_test = norm_images(X_train, X_val, X_test, args)
-
-    # X_train, y_train = aug_train_data(X_train, y_train, args)
-
     X_train, X_val, X_test = norm_xy_coords(X_train, X_val, X_test, args)
-    # y_train, y_val, y_test = norm_z_coords(y_train, y_val, y_test, args)
+    y_train, y_val, y_test = norm_z_coords(y_train, y_val, y_test, args)
+
+    X_train, y_train = aug_training_data(X_train, y_train, args['aug_poisson_lam'])
 
     print('Train pixel vals', X_train[0].min(), X_train[0].max())
     print('Val pixel vals', X_val[0].min(), X_val[0].max())
@@ -620,22 +691,21 @@ def prepare_data(args):
     print('Val', X_val[0].shape, X_val[1].shape)
     print('Test', X_test[0].shape, X_test[1].shape)
 
-    train_data = get_dataset(X_train, y_train, args, True)
-    val_data = get_dataset(X_val, y_val, args)
-    test_data = get_dataset(X_test, y_test, args)
+    train_data = get_dataset(X_train, y_train)
+    val_data = get_dataset(X_val, y_val)
+    test_data = get_dataset(X_test, y_test)
 
-    train_data = preprocess_img_dataset(train_data, args)
-    val_data = preprocess_img_dataset(val_data, args)
-    test_data = preprocess_img_dataset(test_data, args)
+    train_data = preprocess_img_dataset(train_data, args['image_size'], args['norm'])
+    val_data = preprocess_img_dataset(val_data, args['image_size'], args['norm'])
+    test_data = preprocess_img_dataset(test_data, args['image_size'], args['norm'])
 
-    train_data = prep_dataset(train_data)
-    val_data = prep_dataset(val_data)
-    test_data = prep_dataset(test_data)    
+    train_data = prep_dataset(train_data, args, True)
+    val_data = prep_dataset(val_data, args)
+    test_data = prep_dataset(test_data, args)
 
     save_dataset(val_data, 'val', args)
     save_dataset(test_data, 'test', args)
-
-    save_dataset(train_data, 'train', args)
+    # save_dataset(train_data, 'train', args)
 
     return train_data, val_data, test_data, locs
 
@@ -705,7 +775,7 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--project', default='smlm_z3')
+    parser.add_argument('--project', default='autofocus')
 
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
     parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
@@ -723,9 +793,11 @@ def parse_args():
     parser.add_argument('--norm', default='frame-min')
     parser.add_argument('--aug-poisson-lam', type=float, help='Poisson noise lam', default=0)
 
+    parser.add_argument('--image_size', type=int, default=64, help='Resize PSFs to this size for model')
     parser.add_argument('--dense1', type=int, default=128)
     parser.add_argument('--dense2', type=int, default=64)
     parser.add_argument('--architecture', default='vit_b16')
+    parser.add_argument('--activation')
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.0001)
 
     parser.add_argument('--dataset', help='Dataset type, used for wandb', default='unknown')
@@ -754,11 +826,11 @@ def parse_args():
 
     if not args['batch_size']:
         args['batch_size'] = 512 * N_GPUS
-
     return args
 
 
 def init_wandb(args):
+    print('initiating wandb...', end='')
     code_dir = os.path.dirname(os.path.normpath(__file__))
     wandb.init(
         project=args['project'],
@@ -780,12 +852,17 @@ def init_wandb(args):
 if __name__ == '__main__':
     args = parse_args()
     
-    if os.path.exists(args['outdir']):
-        shutil.rmtree(args['outdir'])
+    
+    i = 1
+    base_outdir = args['outdir']
+    while os.path.exists(args['outdir']):
+        args['outdir'] = f'{base_outdir}_{i}'
+        # shutil.rmtree(args['outdir'])
+        i += 1
     os.makedirs(args['outdir'], exist_ok=True)
 
-    tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
-    tf.config.experimental.enable_op_determinism()
+    # tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
+    # tf.config.experimental.enable_op_determinism()
 
     init_wandb(args)
     main(args)

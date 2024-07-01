@@ -5,6 +5,19 @@ import os
 import tensorflow as tf
 import numpy as np
 from PIL import Image
+import json
+
+
+def get_model_report(model_dir):
+    model_report = os.path.join(model_dir, 'results', 'report.json')
+
+    with open(model_report) as f:
+        d = json.load(f)
+    return d
+
+
+def get_model_img_norm(model_report):
+    return model_report['args']['norm']
 
 
 def read_multipage_tif(impath):
@@ -32,9 +45,9 @@ def concat_psf_axial(psf, subsample_n, perc_disp=0.6):
     return sub_psf
 
 
-def show_psf_axial(psf, title=None, subsample_n=7):
+def show_psf_axial(psf, title=None, subsample_n=7, perc_disp=0.6):
     psf = np.copy(psf)
-    sub_psf = concat_psf_axial(psf, subsample_n).T
+    sub_psf = concat_psf_axial(psf, subsample_n, perc_disp).T
 
     if title:
         plt.title(title)
@@ -76,14 +89,12 @@ def load_dataset(name, args):
 
 from tensorflow.keras import Sequential, layers
 
-image_size = 64
-imshape = (image_size, image_size)
 
-
-def apply_resizing(img_xy, z):
+def apply_resizing(img_xy, z, image_size=64, inter='bicubic'):
+    imshape = (image_size, image_size)
     img_preprocessing = Sequential([
-        layers.Resizing(*imshape),
-        layers.Lambda(tf.image.grayscale_to_rgb)
+        layers.Resizing(*imshape, interpolation=inter),
+        # layers.Lambda(tf.image.grayscale_to_rgb)
     ])
     img_xy = list(img_xy)
     img_xy[0] = img_preprocessing(img_xy[0])
@@ -92,25 +103,45 @@ def apply_resizing(img_xy, z):
 
 from functools import partial
 
-def _apply_img_norm(img_xy, z, args):
+
+def _apply_img_norm(img_xy, z, img_norm):
     img_xy = list(img_xy)
     imgs = img_xy[0]
-    if args['norm'] == 'frame-mean':
-        func = tf.math.reduce_mean
-    elif args['norm'] == 'frame-min':
-        func = tf.math.reduce_min
+    if img_norm == 'frame-mean':
+        means = tf.math.reduce_mean(imgs, keepdims=True)
+        imgs -= means
+        maxs = tf.math.reduce_max(imgs, keepdims=True)
+        imgs = tf.nn.relu(imgs / maxs)
+    elif img_norm == 'frame-min':
+        mins = tf.math.reduce_min(imgs, keepdims=True)
+        imgs -= mins
+        maxs = tf.math.reduce_max(imgs, keepdims=True)
+        imgs = tf.nn.relu(imgs / maxs)
+    elif img_norm == 'frame-max':
+        maxs = tf.math.reduce_max(imgs, keepdims=True)
+        imgs = imgs / maxs
+    elif img_norm == 'fov-max':
+        maxs = 65535
+        imgs = tf.nn.relu(imgs / maxs)
+    # elif img_norm == 'fov-minmax':
+    #     maxs = tf.math.reduce_max(imgs)
+    #     mins = tf.math.reduce_min(imgs)
+    #     imgs = (imgs - mins) / (maxs-mins)
+    elif img_norm == 'standard':
+        mean = tf.math.reduce_mean(imgs)
+        std = tf.math.reduce_std(imgs)
+        imgs = (imgs - mean) / std
     else:
+        print(f'img_norm: {img_norm} not supported')
         raise NotImplementedError()
-    means = func(imgs, axis=(1,2,3), keepdims=True)
-    imgs -= means
-    maxs = tf.math.reduce_max(imgs, axis=(1,2,3), keepdims=True)
-    imgs = tf.nn.relu(imgs / maxs)
     return (imgs, img_xy[1]), z
 
 
-def preprocess_img_dataset(dataset, args):
-    apply_img_norm = partial(_apply_img_norm, args=args)
-    dataset = dataset.map(apply_resizing, num_parallel_calls=tf.data.AUTOTUNE)
+def preprocess_img_dataset(dataset, image_size, img_norm):
+    apply_img_norm = partial(_apply_img_norm, img_norm=img_norm)
+
+    f = partial(apply_resizing, image_size=image_size, inter='bicubic')
+    dataset = dataset.map(f, num_parallel_calls=tf.data.AUTOTUNE)
     # if args.get('batch_size'):
     #     dataset = dataset.batch(args['batch_size'])
     dataset = dataset.map(apply_img_norm, num_parallel_calls=tf.data.AUTOTUNE)

@@ -18,6 +18,7 @@ from argparse import ArgumentParser
 from scipy.stats import gaussian_kde
 import wandb
 import json
+from localise_exp_sample import read_exp_pixel_size
 
 # old_locs = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/figure2/nup_cell_picked.hdf5'
 
@@ -168,11 +169,8 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     if 'lpz' not in list(locs):
         locs['lpz'] = np.mean(locs[['lpx', 'lpy']].to_numpy()) / 2
     if 'sz' not in list(locs):
-        if not ('sx' in list(locs) and 'sy' in list(locs)):
-            locs['sx'] = 0.5
-            locs['sy'] = 0.5
         locs['sz'] = np.mean(locs[['sx', 'sy']].to_numpy()) / 3
-    # locs['lpx'] = 0.1
+     # locs['lpx'] = 0.1
     # locs['sx'] = 0.1
     # locs['lpy'] = 0.1
     # locs['sy'] = 0.1
@@ -222,12 +220,12 @@ def write_nup_plots(locs, args, good_dir, other_dir):
     good_nup = 0
     bad_nup = 0
     for cid in set(locs['clusterID']):
-        # if not cid in [6, 18, 19, 21, 22]:
-        #     continue
+        if not cid in [10]:
+            continue
         print('Cluster ID', cid, end='')
 
         df = locs[locs['clusterID']==cid]
-        if not args['disable_filter']:
+        if args['filter_locs']:
             df = filter_locs(df).copy()
 
         if df.shape[0] == 0:
@@ -280,16 +278,25 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             z_between_peaks = np.linspace(min(z_peaks), max(z_peaks), 5000)
             scores = kde(z_between_peaks)
             density_cutoff = min(scores) * 1.05
+
             df['density'] = kde(df['z [nm]'].to_numpy())
 
             x = [df['z [nm]'].min(), df['z [nm]'].max()]
             y = [density_cutoff, density_cutoff]
             ax4.plot(x, y, 'r--', label='min density')
             ax4.set_title(f'Sep: {round(sep, 2)}')
-
             df = df[df['density']>=density_cutoff]
+
+            mean_peak = np.mean(kde(z_peaks))
+            prominence = any(scores < 0.9 * mean_peak)
+
+            peak_vals = kde(z_peaks)
+            ratio = max(peak_vals) / min(peak_vals)
+            equal_ratio = ratio <= 1.5
         else:
             sep = 0
+            prominence = False
+            equal_ratio = False
 
         # Plot peaks
         for peak in z_peaks:
@@ -299,6 +306,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             
         if df.shape[0] == 0:
             plt.close()
+            bad_nup += 1
             continue
         
         ax1 = fig.add_subplot(gs[0, 0])
@@ -339,21 +347,32 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             'seperation': sep,
         })
 
+
         margin=10
-        if 50-margin <= sep and sep <= 50+margin:
+        nup_good = 50-margin <= sep and sep <= 50+margin and prominence and equal_ratio
+        if nup_good:
             cluster_outdir = good_dir
             print(' Good')
             good_nup += 1
         else:
+            reasons = [' Bad']
+            if not (50-margin <= sep and sep <= 50+margin):
+                reasons.append('sep')
+            if not prominence:
+                reasons.append('prom.')
+            if not equal_ratio:
+                reasons.append('eq ratio')
+            reasons = ', '.join(reasons)
             cluster_outdir = other_dir
-            print(' Bad')
+            print(reasons)
             bad_nup += 1
-        plt.suptitle(f'Nup ID: {cid}, N points: {df.shape[0]}, {septxt}')
+        import time
+        plt.suptitle(f'Nup ID: {cid}, N points: {df.shape[0]}, {septxt} {str(time.time())}')
         imname = f'nup_{cid}_{BLUR}.png'
         outpath = os.path.join(cluster_outdir, imname)
         plt.savefig(outpath)
         plt.close()
-        if not args['no_wandb']:
+        if not args['no_wandb'] and nup_good:
             wandb.log({imname: wandb.Image(outpath)})
 
 
@@ -381,23 +400,26 @@ def prep_dirs(args):
 def load_and_pick_locs(args):
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
-    try:
-        assert info[1]['Pixelsize'] == args['pixel_size']
-    except AssertionError:
-        print('Pixel size mismatch', info[1]['Pixelsize'],  args['pixel_size'])
-        quit(1)
+    if info[1]['Pixelsize'] != args['pixel_size']:
+        msg = f"Pixel size mismatch {info[1]['Pixelsize']} {args['pixel_size']}"
+        raise RuntimeError(msg)
 
     if args['picked_locs']:
         picked_locs, old_info = io.load_locs(args['picked_locs'])
         picked_locs = pd.DataFrame.from_records(picked_locs)
+
         locs = locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
     locs['clusterID'] = locs['group']
-    if 'z' not in list(locs):
-        locs['z'] = locs['z [nm]'] / args['pixel_size']
-    if 'z [nm]' not in list(locs):
-        locs['z [nm]'] = locs['z'] * args['pixel_size']
+    locs['z'] = locs['z [nm]'] / args['pixel_size']
     return locs
 
+def gen_z_histplot(locs, args):
+    sns.histplot(locs['z [nm]'])
+    outpath = os.path.join(args['outdir'], 'z_histplot.png')
+    plt.savefig(outpath)
+    plt.close()
+
+    wandb.log({'z_histplot': wandb.Image(outpath)})
 
 def main(args):
     good_dir, other_dir = prep_dirs(args)
@@ -405,6 +427,8 @@ def main(args):
     shutil.copy(os.path.abspath(__file__), os.path.join(args['outdir'], 'render_nup.py.bak'))
 
     locs = load_and_pick_locs(args)
+    
+    gen_z_histplot(locs, args)
 
     write_nup_plots(locs, args, good_dir, other_dir)
     print('Wrote dirs:')
@@ -416,14 +440,14 @@ def main(args):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument('-l', '--locs', default='./locs_3d.hdf')
-    parser.add_argument('-px', '--pixel-size', default=86, type=int)
+    # parser.add_argument('-px', '--pixel-size', default=86, type=int)
     parser.add_argument('-p', '--picked-locs')
     parser.add_argument('-o', '--outdir', default='./nup_renders3')
     parser.add_argument('-os', '--oversample', default=30, type=int)
     parser.add_argument('-mb', '--min-blur', default=0.001)
     parser.add_argument('-b', '--blur-method', default='gaussian')
-    parser.add_argument('-df', '--disable-filter', action='store_true')
-    parser.add_argument('-k', '--kde-factor', default=0.75, type=float)
+    parser.add_argument('--filter-locs', action='store_true')
+    parser.add_argument('-k', '--kde-factor', default=0.5, type=float)
     parser.add_argument('--no-wandb', action='store_true')
     return vars(parser.parse_args())
 
@@ -486,11 +510,9 @@ def init_model_run(args):
         print(e)
         
 
-
-
-
 if __name__=='__main__':
     args = parse_args()
+    args['pixel_size'] = read_exp_pixel_size(args)
     if not args['no_wandb']:
         init_model_run(args)
 
