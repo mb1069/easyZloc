@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 from util.util import load_dataset, load_model
 
+# os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 def bestfit_error(z_true, z_pred):
     def linfit(x, c):

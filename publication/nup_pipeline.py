@@ -13,19 +13,19 @@ def main(args):
     init_wandb(args)
     os.makedirs(args['outdir'], exist_ok=True)
     main_train(args)
-    args['locs'] = args['exp_locs']
-    args['spots'] = args['exp_spots']
-    args = preprocess_args(args)
-    main_loc_exp(args)
-    args['outdir'] = os.path.join(args['outdir'], 'out_nup')
-    args['locs'] = args['exp_3d_locs']
-    args['picked_locs'] = None
-    main_render_nup(args)
+    # args['locs'] = args['exp_locs']
+    # args['spots'] = args['exp_spots']
+    # args = preprocess_args(args)
+    # main_loc_exp(args)
+    # args['outdir'] = os.path.join(args['outdir'], 'out_nup')
+    # args['locs'] = args['exp_3d_locs']
+    # args['picked_locs'] = None
+    # main_render_nup(args)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--project', default='smlm_z3')
+    parser.add_argument('--project', default='autofocus')
 
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
     parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
@@ -40,37 +40,39 @@ def parse_args():
     parser.add_argument('-b', '--batch_size', type=int, help='Batch size (per GPU)', default=1024)
     parser.add_argument('--aug-brightness', type=float, help='Brightness', default=0)
     parser.add_argument('--aug-gauss', type=float, help='Gaussian', default=0)
-    parser.add_argument('--norm')
     parser.add_argument('--aug-poisson-lam', type=float, help='Poisson noise lam', default=0)
 
     parser.add_argument('--dense1', type=int, default=128)
     parser.add_argument('--dense2', type=int, default=64)
     parser.add_argument('--architecture', default='vit_b16')
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.0001)
+    parser.add_argument('--norm', default='frame-min')
 
-    parser.add_argument('--dataset', help='Dataset type, used for wandb', default='unknown')
-    parser.add_argument('--system', help='Optical system', default='unknown')
+    parser.add_argument('--dataset', help='Dataset type, used for wandb', required=True)
+    parser.add_argument('--system', help='Optical system', required=True)
 
     parser.add_argument('--regen-report', action='store_true', help='Regen only training report from existing dir')
     parser.add_argument('--ext-test-dataset')
     parser.add_argument('--pretrained-model')
-
+    parser.add_argument('--activation')
     # Loc exp data
     parser.add_argument('--exp-locs', help='2D localisation file from Picasso', default='./roi_startpos_810_790_split.ome_locs.hdf5')
     parser.add_argument('--exp-spots', help='Spots file from Picasso', default='roi_startpos_810_790_split.ome_spots.hdf5')
     parser.add_argument('-p', '--picked-locs', help='Localisations picked from Locs file using Picasso', default='roi_startpos_810_790_split.ome_locs_picked.hdf5')
 
-    parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, default=110)
+    parser.add_argument('-px', '--pixel_size', help='Pixel size (nm)', type=int, default=86)
 
     # Nup renders
     parser.add_argument('--exp-3d-locs', default='./out/locs_3d.hdf5')
-    parser.add_argument('-os', '--oversample', default=30, type=int)
+    parser.add_argument('-os', '--oversample', default=10, type=int)
     parser.add_argument('-mb', '--min-blur', default=0.001)
     parser.add_argument('--blur-method', default='gaussian')
-    # parser.add_argument('-df', '--disable-filter', action='store_true')
-    parser.add_argument('-k', '--kde-factor', default=0.75, type=float)
+    parser.add_argument('--filter-locs', action='store_true')
+    parser.add_argument('-k', '--kde-factor', default=0.5, type=float)
     parser.add_argument('--no-wandb', action='store_true')
-
+    parser.add_argument('--baseline', type=int, default=100, help='From picasso loc parameters')
+    parser.add_argument('--sensitivity', type=int, default=0.45, help='From picasso loc parameters')
+    parser.add_argument('--gain', type=int, default=1, help='From picasso loc parameters')
 
     args = vars(parser.parse_args())
     args['model_dir'] = os.path.abspath(args['outdir'])
