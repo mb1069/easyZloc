@@ -27,7 +27,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset
+from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset, ScaledMeanAbsoluteError
 from tifffile import imread
 import pandas as pd
 from tqdm import tqdm
@@ -258,7 +258,7 @@ class RandomGaussianNoise(keras.layers.Layer):
 def get_model(args):
     imshape = (args['image_size'], args['image_size'], 1)
 
-    img_input = Input(shape=imshape)
+    img_input = Input(shape=imshape, name='img_in')
     # RGB used for compatibility with pretrained weights
     img_rgb = tf.image.grayscale_to_rgb(img_input)
 
@@ -274,7 +274,10 @@ def get_model(args):
             
         img_aug_out = extra_aug(img_rgb)
     
-    coords_input = layers.Input((2,))
+    # Rescale from [0, 1] to [-1, 1] for better learning efficiency with imagenet weights
+    img_aug_out = layers.Rescaling(scale=2, offset=-1)(img_aug_out)
+
+    coords_input = layers.Input((2,), name='xy_coords_in')
     x_coords = layers.Dense(64)(coords_input)
 
     x_coords = layers.Dense(64)(x_coords)
@@ -289,6 +292,7 @@ def get_model(args):
         'vgg': keras.applications.VGG19,
         'resnet': keras.applications.ResNet50V2,
         'resnet_large': keras.applications.ResNet101V2,
+        'efficientnet_v2s': keras.applications.EfficientNetV2S
     }[args['architecture']]
 
     if 'vit_' in args['architecture']:
@@ -301,21 +305,24 @@ def get_model(args):
         rgb_shape = (args['image_size'], args['image_size'], 3)
         feat_model = model_version(input_shape=rgb_shape,
                                   weights='imagenet',
-                                  include_top=False)
+                                  include_top=False,
+                                  include_preprocessing=False)
 
     x = feat_model(img_aug_out)
     # Add additional layers for regression prediction
     x = Flatten()(x)
     x = tf.concat([x, x_coords], axis=-1)
     x = Dense(args['dense1'], activation='gelu')(x)
-    x = Dropout(0.5)(x)
+    x = Dropout(0.25)(x)
     if args['dense2'] != 0:
         x = Dense(args['dense2'], activation='gelu')(x)
-        x = Dropout(0.5)(x)
+        x = Dropout(0.25)(x)
     regression_output = Dense(1, activation='tanh')(x)  # Linear activation for regression
     model = Model(inputs=[img_input, coords_input], outputs=regression_output)
 
     aug_model = Model(inputs=img_input, outputs=img_aug_out)
+
+    save_model_plot(model, args['outdir'])
     return model, aug_model
 
 
@@ -389,7 +396,6 @@ def gen_example_aug_imgs(aug_model, train_data, args):
     del aug_model
     gc.collect()
 
-
 def train_model(train_data, val_data, args):
     epochs = 3 if args['debug'] else 1000
     lr = args['learning_rate']
@@ -397,6 +403,10 @@ def train_model(train_data, val_data, args):
 
     strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+
+    # scaled_mae_metric = partial(_scaled_mae_metric, scale_nm=args['zrange'])
+
+    
     with strategy.scope():
 
         # Model refining
@@ -409,12 +419,12 @@ def train_model(train_data, val_data, args):
 
         opt = optimizers.AdamW(learning_rate=lr)
 
-        model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mean_absolute_error'])
+        model.compile(loss='mean_squared_error', optimizer=opt, metrics=[ScaledMeanAbsoluteError(scale_nm=args['zrange'])])
 
     # tb_callback = tf.keras.callbacks.TensorBoard(log_dir=f"{args['outdir']}/tensorboard", profile_batch='10, 15')
 
     callbacks = [
-        ValidationCallback(val_data, args['zrange']),
+        # ValidationCallback(val_data, args['zrange']),
         WandbMetricsLogger(),
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
                         patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
@@ -424,7 +434,7 @@ def train_model(train_data, val_data, args):
     ]
 
     try:
-        history = model.fit(train_data, epochs=epochs, callbacks=callbacks, shuffle=True, verbose=True)
+        history = model.fit(train_data, epochs=epochs, validation_data=val_data, callbacks=callbacks, shuffle=True, verbose=True)
     except KeyboardInterrupt:
         print('\nInterrupted training\n')
         history = None
@@ -750,6 +760,10 @@ def get_test_error(model, test_data):
     preds = model.predict(test_data, batch_size=N_GPUS * 4096).squeeze()
     return mean_absolute_error(z, preds)
 
+
+def save_model_plot(model, outdir):
+    outpath = os.path.join(outdir, 'architecture.png')
+    keras.utils.plot_model(model, show_shapes=True, show_layer_activations=True, to_file=outpath)
 
 def main(args):
     if not args['regen_report']:

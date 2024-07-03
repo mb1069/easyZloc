@@ -203,6 +203,11 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     if ax is None:
         ax = plt.gca()
     ax.set_aspect('equal', 'box')
+
+    # px_vals = img.flatten()
+    # per95 = np.percentile(px_vals, 75)
+    # print(img.min(), img.max(), per95)
+    # np.save('/home/miguel/Projects/smlm_z/publication/tmp.npy', img)
     img_plot = plt.imshow(img, extent=extent)
     # plt.colorbar(img_plot)
 
@@ -217,11 +222,13 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
         ax.add_artist(scalebar)
 
 def write_nup_plots(locs, args, good_dir, other_dir):
+    print('Writing nup plots')
+    print(locs.shape)
     good_nup = 0
     bad_nup = 0
     for cid in set(locs['clusterID']):
-        if not cid in [10]:
-            continue
+        # if not cid in [24]:
+        #     continue
         print('Cluster ID', cid, end='')
 
         df = locs[locs['clusterID']==cid]
@@ -229,7 +236,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             df = filter_locs(df).copy()
 
         if df.shape[0] == 0:
-            print('')
+            print(' \n')
             continue
         df = center_view(df)
 
@@ -241,7 +248,6 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         if df.shape[0] < 5:
             print('No remaining localisations, continuing...')
             continue
-
 
         fig = plt.figure()
         gs = fig.add_gridspec(1, 4)
@@ -370,6 +376,8 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         plt.suptitle(f'Nup ID: {cid}, N points: {df.shape[0]}, {septxt} {str(time.time())}')
         imname = f'nup_{cid}_{BLUR}.png'
         outpath = os.path.join(cluster_outdir, imname)
+        if nup_good:
+            print(outpath)
         plt.savefig(outpath)
         plt.close()
         if not args['no_wandb'] and nup_good:
@@ -387,7 +395,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
 def prep_dirs(args):
 
-    shutil.rmtree(args['outdir'], ignore_errors=True)
+    # shutil.rmtree(args['outdir'], ignore_errors=True)
     os.makedirs(args['outdir'], exist_ok=True)
 
     good_dir = os.path.join(args['outdir'], 'good_results')

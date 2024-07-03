@@ -6,6 +6,24 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 import json
+import yaml
+
+
+from keras.metrics import MeanAbsoluteError
+
+# from keras import backend as K
+# from functools import partial
+# def _scaled_mae_metric(y_true, y_pred, scale_nm=1000):
+#     abs_difference = K.abs(y_true - y_pred) * scale_nm
+#     return K.mean(abs_difference, axis=-1)  # Note the `axis=-1`
+
+class ScaledMeanAbsoluteError(MeanAbsoluteError):
+    def __init__(self, name='mean_absolute_error', scale_nm=1000, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.scale_nm = scale_nm
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        return super().update_state(y_true * self.scale_nm, y_pred * self.scale_nm, sample_weight=sample_weight)
 
 
 def get_model_report(model_dir):
@@ -15,6 +33,26 @@ def get_model_report(model_dir):
         d = json.load(f)
     return d
 
+
+def get_model_output_scale(model_report):
+    return model_report['args']['zrange']
+    
+
+def get_model_imsize(model_report):
+    return model_report['args'].get('imsize') or 64
+
+
+def read_exp_pixel_size(args):
+    yaml_file = args['locs'].replace('.hdf5', '.yaml')
+    print(yaml_file)
+    with open(yaml_file) as f:
+        docs = list(yaml.safe_load_all(f))
+    
+    d = dict()
+    for d2 in docs:
+        d.update(d2)
+
+    return d['Pixelsize']
 
 def get_model_img_norm(model_report):
     return model_report['args']['norm']
@@ -78,8 +116,8 @@ def grid_psfs(psfs, cols=10):
     return psfs
 
 
-def load_model(args):
-    return keras.models.load_model(os.path.join(args['outdir'], './latest_vit_model3'))
+def load_model(model_path):
+    return keras.models.load_model(model_path, custom_objects={'ScaledMeanAbsoluteError': ScaledMeanAbsoluteError})
 
 def save_dataset(dataset, name, args):
     dataset.save(os.path.join(args['outdir'], name))
