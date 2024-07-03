@@ -7,8 +7,7 @@ from sklearn.metrics import root_mean_squared_error
 import os
 import matplotlib.pyplot as plt
 
-from util.util import load_dataset, load_model
-
+from util.util import load_dataset, load_model, get_model_output_scale, get_model_report
 # os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 def bestfit_error(z_true, z_pred):
@@ -34,6 +33,7 @@ def remove_constant_error(xys, zs, pred_zs):
     all_errors = np.concatenate(all_errors)
     return all_errors
 
+
 def get_z_coordinates(dataset):
     zs = []
     xys = []
@@ -47,13 +47,18 @@ def get_z_coordinates(dataset):
 def get_model_performance(args):
     model = load_model(args)
 
+    model_report = get_model_report(args['outdir'])
+
+    zrange = get_model_output_scale(model_report)
+
     results = {}
 
     for name in ['test']:
         dataset = load_dataset(name, args)
         xys, zs = get_z_coordinates(dataset)
+        zs *= zrange
         # coords2 = np.array(['_'.join(x.astype(str)) for x in xys])
-        pred_zs = model.predict(dataset, batch_size=4096).squeeze()
+        pred_zs = model.predict(dataset, batch_size=4096).squeeze() * zrange
 
         errors = remove_constant_error(xys, zs, pred_zs)
         results[name] = (zs, errors)

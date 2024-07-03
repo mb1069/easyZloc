@@ -8,7 +8,7 @@ sys.path.append(cwd)
 if not os.environ.get('CUDA_VISIBLE_DEVICES'):
     os.environ['CUDA_VISIBLE_DEVICES']='0'
 
-os.environ['CUDA_VISIBLE_DEVICES']=''
+# os.environ['CUDA_VISIBLE_DEVICES']=''
 
 import joblib
 import json
@@ -24,8 +24,7 @@ import tensorflow as tf
 from picasso import io
 import yaml
 
-from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm
-
+from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
@@ -176,7 +175,6 @@ def apply_coords_norm(coords, args):
 
 def pred_z(model, spots, coords, args, zrange, im_size, img_norm):
     spots = spots.astype(np.float32)[:, :, :, np.newaxis]
-    print('Predicting z locs')
 
     print('Coords value range:', coords.min(), coords.max())
     exp_spots = tf.data.Dataset.from_tensor_slices(spots)
@@ -258,26 +256,6 @@ def tmp_filter_locs(new_locs, spots, args):
     # spots = spots[idx]
     return merge_locs, spots
 
-def get_model_output_scale(model_report):
-    return model_report['args']['zrange']
-    
-
-def get_model_imsize(model_report):
-    return model_report['args'].get('imsize') or 64
-
-
-def read_exp_pixel_size(args):
-    yaml_file = args['locs'].replace('.hdf5', '.yaml')
-    print(yaml_file)
-    with open(yaml_file) as f:
-        docs = list(yaml.safe_load_all(f))
-    
-    d = dict()
-    for d2 in docs:
-        d.update(d2)
-
-    return d['Pixelsize']
-
 
 def main(args):
 
@@ -296,8 +274,9 @@ def main(args):
     mirrored_strategy = tf.distribute.MirroredStrategy()
 
     with mirrored_strategy.scope():
+        model = load_model(args['model'])
         # model = tf.saved_model.load(args['model'])
-        model = tf.keras.models.load_model(args['model'])
+        # model = tf.keras.models.load_model(args['model'])
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
 
