@@ -6,16 +6,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splrep, BSpline
 import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
 import h5py
 import shutil
 
 def plot_drift(df, outpath):
-    sns.scatterplot(data=df.groupby('frame').mean(), x='frame', y='z [nm]', alpha=0.05, label='z locs (nm)')
-    plt.savefig(outpath)
+    group_df = df.groupby('frame').mean()
+    fig = sns.scatterplot(data=group_df, x='frame', y='z [nm]', alpha=0.05, label='z locs (nm)').get_figure()
+    fig.savefig(outpath)
     plt.close()
+    print('Plotted drift')
 
 def save_new_locs(df, args):
+    print('Saving new locs')
     locs_undrift_path = args['locs'].replace('locs_3d.hdf5', f'locs_3d_undrift_z.hdf5')
 
     with h5py.File(locs_undrift_path, "w") as locs_file:
@@ -24,7 +26,9 @@ def save_new_locs(df, args):
     print(f'Wrote locs to {locs_undrift_path}')
 
 
-def undrift_by_rcc(df, outpath, args):
+def undrift(df, outpath, args):
+    print('Undrifting')
+
     df = df.copy(deep=True)
 
     def frame_center(x):
@@ -38,6 +42,7 @@ def undrift_by_rcc(df, outpath, args):
     y = df_group_bin['z [nm]']
 
     spline = BSpline(*splrep(x, y, s=len(y)*100))
+    print('Fitted spline')
 
     _x = np.arange(df['frame'].min(), df['frame'].max()+1)
     _y = spline(_x)
@@ -51,6 +56,7 @@ def undrift_by_rcc(df, outpath, args):
     del df['frame_bin']
     del df['index']
     df['z [nm]'] -= df['frame'].map(lambda f: _y[f])
+    df['z'] -= df['frame'].map(lambda f: _y[f])
     return df
 
 
@@ -69,10 +75,12 @@ def main(args):
     # locs_path = '/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_33/out_nup/locs_3d.hdf5'
     # locs_path = '/home/miguel/Projects/smlm_z/publication/VIT_fd-loco3/out_3/out_nup/locs_3d.hdf5'
     df = pd.read_hdf(args['locs'], key='locs')
+    print(f'Loaded locs {df.shape}')
 
+    
     plot_drift(df, os.path.join(outpath, 'init_drift.png'))
 
-    df_out = undrift_by_rcc(df, outpath, args)
+    df_out = undrift(df, outpath, args)
 
     save_new_locs(df_out, args)
     plot_drift(df_out, os.path.join(outpath, 'corrected_drift.png'))

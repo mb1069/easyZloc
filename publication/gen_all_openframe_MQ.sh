@@ -3,14 +3,14 @@ BEADS_DIR="/home/miguel/Projects/data/20230601_MQ_celltype/20230601_MQ_celltype_
 # BEADS_DIR='/home/miguel/Projects/data/all_openframe_beads';
 OUTDIR="/home/miguel/Projects/smlm_z/publication/VIT_openframe_MQ_model";
 PX_SIZE=86;
-ZSTEP=10;
+ZSTEP=20;
 LOCS_NUP='/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5';
 SPOTS_NUP='/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_spots.hdf5';
 PICKED_LOCS_NUP='/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted_picked_4.hdf5';
 PRETRAINED_MODEL='/home/miguel/Projects/smlm_z/publication/VIT_openframe_base_model/out_roll_alignment/latest_vit_model3'
-BRIGHTNESS=0.1
+BRIGHTNESS=0.05
 GAUSS=0.05
-
+NORM='frame-min'
 
 source ~/anaconda3/etc/profile.d/conda.sh
 MODEL_DIR=$OUTDIR/out_roll_alignment
@@ -27,17 +27,17 @@ conda activate smlm_z;
 
 echo "Training model...";
 cd $OUTDIR && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/train_model.py --pretrained-model $PRETRAINED_MODEL --norm frame --system openframe --dataset $BEADS_DIR -o $MODEL_DIR --aug-brightness $BRIGHTNESS --aug-gauss $GAUSS;
+python3 /home/miguel/Projects/smlm_z/publication/train_model.py --norm $NORM --system openframe --dataset $BEADS_DIR -o $MODEL_DIR --aug-brightness $BRIGHTNESS --aug-gauss $GAUSS;
 
-# python3 /home/miguel/Projects/smlm_z/publication/eval_other_bead_stacks.py -mo $MODEL_DIR --norm frame --zstep 10 --datasets /home/miguel/Projects/data/20231020_20nm_beads_10um_range_10nm_step /home/miguel/Projects/data/20230601_MQ_celltype/20230601_MQ_celltype_beads /home/miguel/Projects/data/all_openframe_beads/20231205_miguel_mitochondria /home/miguel/Projects/data/all_openframe_beads/20231212_miguel_openframe /home/miguel/Projects/data/20231128_tubulin_miguel
+python3 /home/miguel/Projects/smlm_z/publication/eval_other_bead_stacks.py -mo $MODEL_DIR --norm $NORM --datasets /home/miguel/Projects/data/20231020_20nm_beads_10um_range_10nm_step /home/miguel/Projects/data/20230601_MQ_celltype/20230601_MQ_celltype_beads /home/miguel/Projects/data/all_openframe_beads/20231205_miguel_mitochondria /home/miguel/Projects/data/all_openframe_beads/20231212_miguel_openframe /home/miguel/Projects/data/20231128_tubulin_miguel
 
 echo "Localising NUP data..."
 cd $MODEL_DIR && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py -l $LOCS_NUP -s $SPOTS_NUP -p $PICKED_LOCS_NUP -px $PX_SIZE -mo . -o $OUT_NUP;
+python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py --norm $NORM -l $LOCS_NUP -s $SPOTS_NUP -p $PICKED_LOCS_NUP -px $PX_SIZE -mo . -o $OUT_NUP;
 cd $OUT_NUP && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUT_NUP/locs_3d.hdf5 -px $PX_SIZE -df -os 10 -k 0.5 -df;
-# cd $OUTDIR/out_roll_alignment && echo $PWD &&
-# python3 ~/publication/localise_exp_sample.py -l $LOCS_NUP -s $SPOTS_NUP -px $PX_SIZE -mo . -o out_nup_full_fov;
+python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUT_NUP/locs_3d.hdf5 -px $PX_SIZE -os 10 -k 0.5;
+cd $OUTDIR/out_roll_alignment && echo $PWD &&
+python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py --norm $NORM -l $LOCS_NUP -s $SPOTS_NUP -px $PX_SIZE -mo . -o out_nup_full_fov;
 
 
 # LOCS_MITO="/media/Data/smlm_z_data/20231212_miguel_openframe/mitochondria/FOV2/storm_1/storm_1_MMStack_Default.ome_locs_undrift.hdf5";
