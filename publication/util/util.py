@@ -8,7 +8,7 @@ from PIL import Image
 import json
 import yaml
 
-
+from tensorflow.keras import Sequential, layers
 from keras.metrics import MeanAbsoluteError
 
 # from keras import backend as K
@@ -119,13 +119,13 @@ def grid_psfs(psfs, cols=10):
 def load_model(model_path):
     return keras.models.load_model(model_path, custom_objects={'ScaledMeanAbsoluteError': ScaledMeanAbsoluteError})
 
+
 def save_dataset(dataset, name, args):
     dataset.save(os.path.join(args['outdir'], name))
 
+
 def load_dataset(name, args):
     return tf.data.Dataset.load(os.path.join(args['outdir'], name))
-
-from tensorflow.keras import Sequential, layers
 
 
 def apply_resizing(img_xy, z, image_size=64, inter='bicubic'):

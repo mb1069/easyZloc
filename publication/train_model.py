@@ -313,10 +313,10 @@ def get_model(args):
     x = Flatten()(x)
     x = tf.concat([x, x_coords], axis=-1)
     x = Dense(args['dense1'], activation='gelu')(x)
-    x = Dropout(0.25)(x)
+    x = Dropout(0.5)(x)
     if args['dense2'] != 0:
         x = Dense(args['dense2'], activation='gelu')(x)
-        x = Dropout(0.25)(x)
+        x = Dropout(0.5)(x)
     regression_output = Dense(1, activation='tanh')(x)  # Linear activation for regression
     model = Model(inputs=[img_input, coords_input], outputs=regression_output)
 
@@ -427,8 +427,8 @@ def train_model(train_data, val_data, args):
         # ValidationCallback(val_data, args['zrange']),
         WandbMetricsLogger(),
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
-                        patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8,),
-        EarlyStopping(monitor='val_mean_absolute_error', patience=10,
+                        patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8, cooldown=5),
+        EarlyStopping(monitor='val_mean_absolute_error', patience=20,
                     verbose=True, min_delta=1, restore_best_weights=True),
         # tb_callback,
     ]

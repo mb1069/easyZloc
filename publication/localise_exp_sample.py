@@ -247,7 +247,7 @@ def tmp_filter_locs(new_locs, spots, args):
 
     new_locs.reset_index(inplace=True, drop=False)
 
-    merge_locs = pd.merge(new_locs, picked_locs, how='inner', on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
+    merge_locs = pd.merge(new_locs, picked_locs, how='merge', on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
     spots = spots[merge_locs['index']]
     assert 'group' in list(merge_locs)
     del merge_locs['index']
@@ -275,8 +275,6 @@ def main(args):
 
     with mirrored_strategy.scope():
         model = load_model(args['model'])
-        # model = tf.saved_model.load(args['model'])
-        # model = tf.keras.models.load_model(args['model'])
     locs, info = io.load_locs(args['locs'])
     locs = pd.DataFrame.from_records(locs)
 
@@ -287,7 +285,6 @@ def main(args):
 
     # TODO remove temp subset of locs
     if args['picked_locs']:
-        print(args['picked_locs'])
         locs, spots = tmp_filter_locs(locs, spots, args)
 
     assert locs.shape[0] == spots.shape[0]

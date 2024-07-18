@@ -1,6 +1,6 @@
 # FD-LOCO
 BEADS_DIR="/media/Data/smlm_z_data/fd-loco/Astigmatism_beads_stacks_2um";
-OUTDIR="/home/miguel/Projects/smlm_z/publication/VIT_fd-loco3/";
+OUTDIR="/home/miguel/Projects/smlm_z/publication/VIT_fd-loco4/";
 PX_SIZE=110;
 ZSTEP=10;
 DEFAULT_LOCS='/home/miguel/Projects/data/fd-loco/roi_startpos_810_790_split.ome_locs.hdf5';
@@ -30,8 +30,8 @@ set -e
 conda activate smlm_z;
 
 # echo "Training model...";
-# cd $OUTDIR && echo $PWD &&
-# python3 /home/miguel/Projects/smlm_z/publication/train_model.py --norm frame --system ries --dataset $BEADS_DIR -o $MODEL_DIR --aug-brightness $BRIGHTNESS --aug-gauss $GAUSS;
+cd $OUTDIR && echo $PWD &&
+python3  /home/miguel/Projects/smlm_z/publication/train_model.py --activation=linear --architecture=mobilenet --aug-brightness=0.08834745796580779 --aug-gauss=0.001723547986120866 --aug-poisson-lam=511.6073576291673 --batch_size=64 --dataset=ries --dense1=1024 --dense2=32 --learning_rate=0.000379076200436412 --norm=fov-max --system=ries;
 
 
 
