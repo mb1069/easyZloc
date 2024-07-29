@@ -58,7 +58,7 @@ def load_data(args):
     if args['debug']:
         idx = np.arange(psfs.shape[0])
         np.random.seed(42)
-        idx = np.random.choice(idx, 100)
+        idx = np.random.choice(idx, 1000)
         psfs = psfs[idx]
         locs = locs.iloc[idx]
 
@@ -301,6 +301,11 @@ def get_model(args):
                                 pretrained=True,
                                 include_top=False,
                                 pretrained_top=False)
+    elif 'resnet' in args['architecture']:
+        rgb_shape = (args['image_size'], args['image_size'], 3)
+        feat_model = model_version(input_shape=rgb_shape,
+                                  weights='imagenet',
+                                  include_top=False)
     else:
         rgb_shape = (args['image_size'], args['image_size'], 3)
         feat_model = model_version(input_shape=rgb_shape,

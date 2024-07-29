@@ -119,7 +119,7 @@ from tqdm.keras import TqdmCallback
 
 import os
 
-BATCH_SIZE = 2**10
+BATCH_SIZE = 128
 LEARNING_RATE = 1e-3
 
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
@@ -128,7 +128,7 @@ def train_model(model, dataset):
 
     callbacks = [
         ReduceLROnPlateau(
-        monitor='mean_absolute_error', factor=0.1, patience=25, verbose=True,
+        monitor='mean_absolute_error', factor=0.1, patience=100, verbose=True,
         mode='min', min_delta=1, min_lr=1e-7,),
         EarlyStopping(monitor='val_mean_absolute_error', patience=150, verbose=False, min_delta=1, restore_best_weights=True),
         TqdmCallback(verbose=1),
@@ -148,6 +148,7 @@ def train_model(model, dataset):
 
     plt.show()
     return model
+
 
 def get_resnet_101(bound, n_channels, lr):
     img_input_shape = (bound, bound, n_channels)

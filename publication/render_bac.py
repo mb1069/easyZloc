@@ -135,7 +135,7 @@ def color_histplot(barplot, cmap_min_z, cmap_max_z):
         bar.set_facecolor(hex_color)
         
 
-def crop_z_view(locs, zrange=200):
+def crop_z_view(locs, zrange=1000):
     zs = locs['z [nm]']
     bin_width = 25
     hist, bins = np.histogram(zs, bins=np.arange(zs.min(), zs.max(), bin_width))
@@ -163,10 +163,12 @@ def disable_axis_ticks():
 
 def get_extent(viewport, pixel_size):
     mins, maxs = viewport
+    mins[:] = min(mins)
+    maxs[:] = max(maxs)
     return np.array([mins[1], maxs[1], mins[0], maxs[0]]) * pixel_size
 
 
-def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
+def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None, viewport_margin=1):
     locs = locs.copy()
 
     # locs['lpx'] = 0.01
@@ -188,7 +190,7 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     locs['y'] -= locs['y'].mean()
     locs['z'] -= locs['z'].mean()
 
-    viewport = get_viewport(locs, ('y', 'x'))
+    viewport = get_viewport(locs, ('y', 'x'), margin=viewport_margin)
 
     # print('\n LOCS', locs.shape)
     # print(viewport)
@@ -199,14 +201,16 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
         plt.xlabel('x [nm]')
         plt.ylabel('y [nm]')
     elif ang_xyz == (np.pi/2, 0, 0):
-        plt.xlabel('z [nm]')
-        plt.ylabel('x [nm]')
-        img = img.T
-        viewport = np.fliplr(viewport)
+        plt.xlabel('x [nm]')
+        plt.ylabel('z [nm]')
+        # img = img.T
+        # viewport = np.fliplr(viewport)
 
     elif ang_xyz == (0, np.pi/2, 0):
-        plt.xlabel('z [nm]')
-        plt.ylabel('y [nm]')
+        plt.xlabel('y [nm]')
+        plt.ylabel('z [nm]')
+        img = img.T
+        viewport = np.fliplr(viewport)
     else:
         print('Axis labels uncertain due to rotation angle')
 
@@ -219,8 +223,6 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
     # per95 = np.percentile(px_vals, 75)
     # print(img.min(), img.max(), per95)
     # np.save('/home/miguel/Projects/smlm_z/publication/tmp.npy', img)
-    img -= img.min()
-    img = img / img.max()
     img_plot = plt.imshow(img, extent=extent)
     # plt.colorbar(img_plot)
 
@@ -234,6 +236,32 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
                             fontproperties=fontprops)
         ax.add_artist(scalebar)
 
+from sklearn.linear_model import LinearRegression
+
+def align_x_axis(df):
+    df['x'] -= df['x'].mean()
+    df['y'] -= df['y'].mean()
+
+    lr = LinearRegression().fit(df[['x']].to_numpy(), df[['y']].to_numpy())
+    gradient = lr.coef_.squeeze()
+    theta = -np.arctan(gradient)
+    
+    rot_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                        [np.sin(theta), np.cos(theta)]])
+    # plt.scatter(df['x'], df['y'])
+    x = np.linspace(df['x'].min(), df['x'].max())[:, None]
+    
+
+    df[['x', 'y']] = (rot_matrix @ df[['x', 'y']].to_numpy().T).T
+    # plt.scatter(df['x'], df['y'], alpha=0.2)
+    # plt.plot(x, lr.predict(x))
+    # plt.savefig(f'/home/miguel/Projects/smlm_z/publication/tmp_{i}.png')
+    # plt.close()
+    for c in ['x', 'y']:
+        df[f'{c} [nm]'] = df[c] * 106
+    return df
+
+
 def write_nup_plots(locs, args, good_dir, other_dir):
     print('Writing nup plots')
     good_nup = 0
@@ -244,13 +272,15 @@ def write_nup_plots(locs, args, good_dir, other_dir):
     bimodal_fit_col_idx = cols.reindex(['bimodal_fit'])
 
     for cid in set(locs['clusterID']):
-        # if not cid in [78]:
-        #     continue
+        if not cid in [9]:
+            continue
         print('Cluster ID', cid, end='')
         df = locs[locs['clusterID']==cid]
+        df = align_x_axis(df)
+        # df = df[df['net_gradient'] > 3000]
         # if args['filter_locs']:
         #     df = filter_locs(df).copy()
-        df = crop_z_view(df)
+        # df = crop_z_view(df)
 
         if df.shape[0] < 5:
             print('No remaining localisations, continuing...')
@@ -260,6 +290,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             del df['index']
         except ValueError:
             pass
+        
 
         fig = plt.figure()
         gs = fig.add_gridspec(1, 4)
@@ -267,6 +298,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
         ax4 = fig.add_subplot(gs[0, 3])
         sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False, bins=40)
+
 
         # Fit KDE to z vals
         kde = gaussian_kde(df['z [nm]'].to_numpy())
@@ -279,7 +311,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
         ax4.plot(zvals, score, label='KDE')
 
-        peak_idx, _ = find_peaks(score, prominence=0.0005)
+        peak_idx, _ = find_peaks(score, prominence=0.0001)
         peak_z = zvals[peak_idx]
         peak_score = score[peak_idx]
 
@@ -295,15 +327,15 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             z_between_peaks = np.linspace(min(z_peaks), max(z_peaks), 5000)
             scores = kde(z_between_peaks)
 
-            density_cutoff = np.mean([min(scores), max(scores)])
+            # density_cutoff = np.mean([min(scores), max(scores)]) * 0.75
+            # density_cutoff = min(scores) * 0.9
 
-            df['density'] = kde(df['z [nm]'].to_numpy())
-
-            x = [df['z [nm]'].min(), df['z [nm]'].max()]
-            y = [density_cutoff, density_cutoff]
-            ax4.plot(x, y, 'r--', label='min density')
-            ax4.set_title(f'Sep: {round(sep, 2)}')
-            df = df[df['density']>=density_cutoff]
+            # df['density'] = kde(df['z [nm]'].to_numpy())
+            # x = [df['z [nm]'].min(), df['z [nm]'].max()]
+            # y = [density_cutoff, density_cutoff]
+            # ax4.plot(x, y, 'r--', label='min density')
+            # ax4.set_title(f'Sep: {round(sep, 2)}')
+            # df = df[df['density']>=density_cutoff]
 
             mean_peak = np.mean(kde(z_peaks))
             prominence = any(scores < 0.9 * mean_peak)
@@ -327,12 +359,12 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             bad_nup += 1
             continue
         ax1 = fig.add_subplot(gs[0, 0])
-        render_locs(orig_df.copy(deep=True), args, (0,0,0), barsize=110, ax=ax1)
+        render_locs(orig_df.copy(deep=True), args, (0,0,0), barsize=1000, ax=ax1, viewport_margin=2)
         ax2 = fig.add_subplot(gs[0, 1])
-        render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=50, ax=ax2)
+        render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=500, ax=ax2, viewport_margin=2)
 
         ax3 = fig.add_subplot(gs[0, 2])
-        render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=50, ax=ax3)
+        render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=500, ax=ax3, viewport_margin=2)
         # if color_by_depth:
         #     color_histplot(histplot, cmap_min_z, cmap_max_z)
         # sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
@@ -362,13 +394,20 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             'seperation': sep,
         })
 
-        margin=10
-        nup_good = 50-margin <= sep and sep <= 50+margin and prominence and equal_ratio
+        margin=100
+        expected_sep = 500
+        nup_good = expected_sep-margin <= sep and sep <= expected_sep+margin and prominence and equal_ratio
         if nup_good:
             cluster_outdir = good_dir
             print(' Good')
             good_nup += 1
             locs.loc[locs['clusterID']==cid, bimodal_fit_col_idx] = 1
+            # import h5py
+            # outpath = os.path.join('/home/miguel/Projects/smlm_z/publication/VIT_zeiss_green_beads2/out2_1/out_bac_3/nup_renders3/good_results', f'{cid}.hdf5')
+            # if 'index' in orig_df:
+            #     del orig_df['index']
+            # with h5py.File(outpath, 'w') as locs_file:
+            #     locs_file.create_dataset("locs", data=orig_df.to_records())
         else:
             reasons = [' Bad']
             if not (50-margin <= sep and sep <= 50+margin):
@@ -382,8 +421,8 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             print(reasons)
             bad_nup += 1
 
-        plt.suptitle(f'Nup ID: {cid}, N points: {orig_df.shape[0]}, {septxt}')
-        imname = f'nup_{cid}_{BLUR}.png'
+        plt.suptitle(f'Bac ID: {cid}, N points: {orig_df.shape[0]}, {septxt}')
+        imname = f'bac_{cid}_{BLUR}.png'
         outpath = os.path.join(cluster_outdir, imname)
         if nup_good:
             print(outpath)
@@ -471,7 +510,7 @@ def parse_args():
     # parser.add_argument('-px', '--pixel-size', default=86, type=int)
     parser.add_argument('-p', '--picked-locs')
     parser.add_argument('-o', '--outdir', default='./nup_renders3')
-    parser.add_argument('-os', '--oversample', default=30, type=int)
+    parser.add_argument('-os', '--oversample', default=10, type=int)
     parser.add_argument('-mb', '--min-blur', default=0.001, type=float)
     parser.add_argument('-b', '--blur-method', default='gaussian')
     parser.add_argument('--filter-locs', action='store_true')
