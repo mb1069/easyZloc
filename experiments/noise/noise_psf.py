@@ -31,17 +31,22 @@ class EMCCD:
         return (img - self.mean())/self.gain()
 
 
-def generate_noisy_psf(img, nsr=None):
-    noise_config = EMCCD(
-        noise_background=np.random.uniform(0, 0.4),
-        quantum_efficiency=np.random.normal(0.9, 0.1),
-        read_noise=np.random.normal(74.4, 1),
-        spurious_charge=np.random.normal(0.0002, 1e-5),
-        em_gain=np.random.normal(300.0, 5), 
-        baseline=np.random.normal(100, 5), 
-        e_per_adu=45.0
-    )
-    return noise_config.add_noise(img)
+def generate_noisy_psf(img, nsr=None, noise_config=None):
+    if noise_config is None:
+        noise_background = np.random.uniform(0, img.max())
+        noise_config = EMCCD(
+            noise_background=noise_background,
+            quantum_efficiency=np.random.normal(0.9, 0.1),
+            read_noise=np.random.normal(74.4, 1),
+            spurious_charge=np.random.normal(0.0002, 1e-5),
+            em_gain=np.random.normal(300.0, 5), 
+            baseline=np.random.normal(50, 5), 
+            e_per_adu=45.0
+        )
+    noisy_psf = noise_config.add_noise(img)
+    noisy_psf[noisy_psf<0] = 0
+
+    return noisy_psf
 
     background_noise_loc = nsr or np.random.uniform(0, 0.8)
     background_noise_scale = np.random.uniform(0, 0.1)

@@ -47,9 +47,11 @@ def undrift(df, outpath, args):
     _x = np.arange(df['frame'].min(), df['frame'].max()+1)
     _y = spline(_x)
 
-    sns.lineplot(x=_x, y=_y, label='Spline fit')
-    plt.xlabel('Frames')
-    plt.ylabel('Z [nm]')
+    fig, ax = plt.subplots()
+    group_df = df[['frame', 'z [nm]']].groupby('frame').mean()
+    sns.scatterplot(data=group_df, x='frame', y='z [nm]', alpha=0.05, label='z locs (nm)', ax=ax)
+    sns.lineplot(x=_x, y=_y, label='Spline fit', c='red', ax=ax)
+    plt.ylabel('Mean localisation z (nm)')
     plt.savefig(os.path.join(outpath, 'z_drift_spline_fit.png'))
     plt.close()
 

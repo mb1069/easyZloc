@@ -287,6 +287,12 @@ def main(args):
     if args['picked_locs']:
         locs, spots = tmp_filter_locs(locs, spots, args)
 
+    print(locs.shape, spots.shape)
+
+    idx = np.argwhere(locs['net_gradient']>5000).squeeze()
+    locs = locs.iloc[idx]
+    spots = spots[idx]
+
     assert locs.shape[0] == spots.shape[0]
     if XLIM or YLIM:
         spots, locs = extract_fov(spots, locs)

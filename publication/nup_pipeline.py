@@ -68,7 +68,7 @@ def parse_args():
     parser.add_argument('-mb', '--min-blur', default=0.001)
     parser.add_argument('--blur-method', default='gaussian')
     parser.add_argument('--filter-locs', action='store_true')
-    parser.add_argument('-k', '--kde-factor', default=0.5, type=float)
+    parser.add_argument('-k', '--kde-factor', default=0.25, type=float)
     parser.add_argument('--no-wandb', action='store_true')
     parser.add_argument('--baseline', type=int, default=100, help='From picasso loc parameters')
     parser.add_argument('--sensitivity', type=int, default=0.45, help='From picasso loc parameters')

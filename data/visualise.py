@@ -161,7 +161,6 @@ def grid_psfs(psfs, cols=10):
         psfs = np.concatenate((psfs, black_placeholder))
         cols = len(psfs) // rows
     psfs = list(chunks(psfs, cols))
-    print(len(psfs))
     psfs = [np.concatenate(p, axis=-1) for p in psfs]
     psfs = np.concatenate(psfs, axis=-2)
     return psfs
@@ -194,7 +193,7 @@ def show_psf_axial(psf, title=None, subsample_n=7):
     if title:
         plt.title(title)
     plt.axis('off')
-    plt.grid(b=None)
+    plt.grid()
     plt.imshow(sub_psf)
     #
     # fig = plt.figure()
