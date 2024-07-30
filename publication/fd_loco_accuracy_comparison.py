@@ -100,7 +100,7 @@ def main(args):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument('outdir')
-    parser.add_argument('--ries_data', default='/home/miguel/Projects/smlm_z/publication/ries_comparison_data.csv')
+    parser.add_argument('--ries_data', default='/home/miguel/Projects/smlm_z/publication/comparisons/fd-loco/ries_comparison_data.csv')
     return vars(parser.parse_args())
 
 if __name__ == '__main__':
