@@ -11,7 +11,7 @@
 
 # OUTDIR='/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_71_nvidia6'
 # Best
-OUTDIR='/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_24_nvidia6_bak'
+OUTDIR='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak'
 
 
 # PX_SIZE=106;
@@ -22,7 +22,7 @@ DEFAULT_LOCS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/stor
 DEFAULT_SPOTS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_spots.hdf5';
 # PICKED='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift_picked.hdf5';
 # PICKED='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift_picked_rect.hdf5';
-# PICKED_UNDRIFTED_FILE='/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_24_nvidia6_bak/out_tub/locs_3d_undrift_z_rect.hdf5';
+# PICKED_UNDRIFTED_FILE='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak/out_tub/locs_3d_undrift_z_rect.hdf5';
 KDE_FACTOR='0.25'
 
 # Poor imaging?

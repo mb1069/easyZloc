@@ -1,6 +1,6 @@
 # Zeiss
 
-OUTDIR='/home/miguel/Projects/smlm_z/publication/VIT_zeiss_green_beads2/out2_1'
+OUTDIR='/home/miguel/Projects/smlm_z/publication/models/zeiss_green_beads/out2_1'
 
 
 # PX_SIZE=106;

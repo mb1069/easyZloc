@@ -11,7 +11,7 @@
 
 # OUTDIR='/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_71_nvidia6'
 # Best
-OUTDIR='/home/miguel/Projects/smlm_z/autofocus/VIT_zeiss_lowsnr_data/out_24_nvidia6_bak'
+OUTDIR='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak'
 
 
 # PX_SIZE=106;
