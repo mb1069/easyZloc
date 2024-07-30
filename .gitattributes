@@ -1,3 +1,4 @@
 comparisons/** filter=lfs diff=lfs merge=lfs -text
 publication/comparisons/fd-loco/ filter=lfs diff=lfs merge=lfs -text
 publication/comparisons/fd-loco/** filter=lfs diff=lfs merge=lfs -text
+publication/comparisons/decode/** filter=lfs diff=lfs merge=lfs -text
