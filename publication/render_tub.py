@@ -412,7 +412,6 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             print(reasons)
             bad_nup += 1
 
-        import h5py
         orig_df['z'] *= 10
         outpath = os.path.join(cluster_outdir, f'{cid}.hdf5')
         if 'index' in orig_df:
@@ -477,8 +476,6 @@ def load_and_pick_locs(args):
     locs['z'] = locs['z [nm]'] / args['pixel_size']
     # if args['picked_locs']:
     #     locs.to_hdf(args['locs'].replace('.hdf5', '_merge_picked.hdf5'), key='locs')
-
-    
     if args['max_frame']:
         locs = locs[locs['frame']<=args['max_frame']]
     return locs

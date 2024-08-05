@@ -19,7 +19,7 @@ from scipy.stats import gaussian_kde
 import wandb
 import json
 
-from util.util import read_exp_pixel_size
+from util.util import read_exp_pixel_size, grid_psfs
 
 # old_locs = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/figure2/nup_cell_picked.hdf5'
 
@@ -234,7 +234,7 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None):
                             fontproperties=fontprops)
         ax.add_artist(scalebar)
 
-def write_nup_plots(locs, args, good_dir, other_dir):
+def write_nup_plots(locs, spots, args, good_dir, other_dir):
     print('Writing nup plots')
     good_nup = 0
     bad_nup = 0
@@ -242,9 +242,9 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
     cols = pd.Series(range(locs.shape[1]), index=locs.columns)
     bimodal_fit_col_idx = cols.reindex(['bimodal_fit'])
-
+    locs.reset_index(inplace=True)
     for cid in set(locs['clusterID']):
-        # if not cid in [78]:
+        # if not cid == 0:
         #     continue
         print('Cluster ID', cid, end='')
         df = locs[locs['clusterID']==cid]
@@ -252,6 +252,17 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         #     df = filter_locs(df).copy()
         df = crop_z_view(df)
 
+
+        from scipy import stats
+        df = df[(np.abs(stats.zscore(df[['lpx', 'lpy', 'sx', 'sy', 'photons', 'net_gradient']])) < 3).all(axis=1)]
+
+        # df = df[df['sx'] < 3]
+        # df = df[df['sy'] < 3]
+        df_spots = spots[df['spot_idx'].to_numpy()]
+        zs = df['z [nm]'].to_list()
+        spot_idx = np.argsort(zs)
+        df_spots = df_spots[spot_idx]
+        
         if df.shape[0] < 5:
             print('No remaining localisations, continuing...')
             continue
@@ -261,23 +272,20 @@ def write_nup_plots(locs, args, good_dir, other_dir):
         except ValueError:
             pass
 
-        fig = plt.figure()
-        gs = fig.add_gridspec(1, 4)
-        plt.subplots_adjust(wspace=0.3, hspace=0)
-
-        ax4 = fig.add_subplot(gs[0, 3])
-        sns.histplot(data=df, x='z [nm]', ax=ax4, stat='density', legend=False, bins=40)
-
+    
         # Fit KDE to z vals
-        kde = gaussian_kde(df['z [nm]'].to_numpy())
-        kde.set_bandwidth(bw_method='silverman')
-        kde.set_bandwidth(kde.factor * args['kde_factor'])
+        
+        zs = df['z [nm]'].to_numpy()
+        bw = 10/np.std(zs)
+        kde = gaussian_kde(zs, bw_method=bw)
+        # kde.set_bandwidth(bw_method='silverman')
+        # kde.set_bandwidth(kde.factor * args['kde_bandwidth'])
 
         zvals = np.linspace(df['z [nm]'].min()-25, df['z [nm]'].max()+25, 5000)
         score = kde(zvals)
         zvals = zvals.squeeze()
 
-        ax4.plot(zvals, score, label='KDE')
+        
 
         peak_idx, _ = find_peaks(score, prominence=0.0005)
         peak_z = zvals[peak_idx]
@@ -301,8 +309,6 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
             x = [df['z [nm]'].min(), df['z [nm]'].max()]
             y = [density_cutoff, density_cutoff]
-            ax4.plot(x, y, 'r--', label='min density')
-            ax4.set_title(f'Sep: {round(sep, 2)}')
             df = df[df['density']>=density_cutoff]
 
             mean_peak = np.mean(kde(z_peaks))
@@ -316,23 +322,14 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             prominence = False
             equal_ratio = False
 
-        # Plot peaks
-        for peak in z_peaks:
-            x = [peak, peak]
-            y = [0, kde(peak).squeeze()]
-            ax4.plot(x, y, 'r--')
+
             
         if df.shape[0] == 0:
             plt.close()
             bad_nup += 1
             continue
-        ax1 = fig.add_subplot(gs[0, 0])
-        render_locs(orig_df.copy(deep=True), args, (0,0,0), barsize=110, ax=ax1)
-        ax2 = fig.add_subplot(gs[0, 1])
-        render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=50, ax=ax2)
 
-        ax3 = fig.add_subplot(gs[0, 2])
-        render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=50, ax=ax3)
+
         # if color_by_depth:
         #     color_histplot(histplot, cmap_min_z, cmap_max_z)
         # sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
@@ -382,15 +379,55 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             print(reasons)
             bad_nup += 1
 
-        plt.suptitle(f'Nup ID: {cid}, N points: {orig_df.shape[0]}, {septxt}')
-        imname = f'nup_{cid}_{BLUR}.png'
-        outpath = os.path.join(cluster_outdir, imname)
-        if nup_good:
-            print(outpath)
-        plt.savefig(outpath)
-        plt.close()
-        if not args['no_wandb'] and nup_good:
-            wandb.log({imname: wandb.Image(outpath)})
+        if not args['no_render']:
+            fig = plt.figure()
+            gs = fig.add_gridspec(1, 5)
+            plt.subplots_adjust(wspace=0.3, hspace=0)
+
+            ax5 = fig.add_subplot(gs[0, 4])
+            ax5.imshow(grid_psfs(df_spots))
+
+
+            ax4 = fig.add_subplot(gs[0, 3])
+            ax4.plot(zvals, score, label='KDE')
+            sns.histplot(data=orig_df.copy(deep=True), x='z [nm]', ax=ax4, stat='density', legend=False, bins=40)
+
+            ax1 = fig.add_subplot(gs[0, 0])
+            render_locs(orig_df.copy(deep=True), args, (0,0,0), barsize=110, ax=ax1)
+            ax2 = fig.add_subplot(gs[0, 1])
+            render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=50, ax=ax2)
+
+            ax3 = fig.add_subplot(gs[0, 2])
+            render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=50, ax=ax3)
+
+            if len(peak_scores_sorted) == 2:
+                z_between_peaks = np.linspace(min(z_peaks), max(z_peaks), 5000)
+                scores = kde(z_between_peaks)
+
+                density_cutoff = np.mean([min(scores), max(scores)])
+
+                df['density'] = kde(df['z [nm]'].to_numpy())
+
+                x = [df['z [nm]'].min(), df['z [nm]'].max()]
+                y = [density_cutoff, density_cutoff]
+                ax4.plot(x, y, 'r--', label='min density')
+                ax4.set_title(f'Sep: {round(sep, 2)}')
+            # Plot peaks
+            for peak in z_peaks:
+                x = [peak, peak]
+                y = [0, kde(peak).squeeze()]
+                ax4.plot(x, y, 'r--')
+
+            plt.suptitle(f'Nup ID: {cid}, N points: {orig_df.shape[0]}, {septxt}')
+            imname = f'nup_{cid}_{BLUR}.png'
+            outpath = os.path.join(cluster_outdir, imname)
+            if nup_good:
+                print(outpath)
+            plt.savefig(outpath)
+            plt.close()
+
+            if not args['no_wandb'] and nup_good:
+                wandb.log({imname: wandb.Image(outpath)})
         # if cid > 10:
         #     break
 
@@ -413,7 +450,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
 def prep_dirs(args):
 
-    shutil.rmtree(args['outdir'], ignore_errors=True)
+    # shutil.rmtree(args['outdir'], ignore_errors=True)
     os.makedirs(args['outdir'], exist_ok=True)
 
     good_dir = os.path.join(args['outdir'], 'good_results')
@@ -422,24 +459,43 @@ def prep_dirs(args):
     os.makedirs(other_dir, exist_ok=True)
     return good_dir, other_dir
 
-
+def load_spots(args):
+    spots_path = os.path.join(os.path.dirname(args['locs']), 'spots.hdf5')
+    with h5py.File(spots_path) as f:
+        return np.array(f['spots'])
+    
 def load_and_pick_locs(args):
-    locs, info = io.load_locs(args['locs'])
+    locs, _info = io.load_locs(args['locs'])
+    info = dict()
+    for x in _info:
+        info.update(x)
+
+    spots = load_spots(args)
+
     locs = pd.DataFrame.from_records(locs)
-    if info[1]['Pixelsize'] != args['pixel_size']:
+
+    locs['spot_idx'] = np.arange(locs.shape[0])
+    
+
+    if info['Pixelsize'] != args['pixel_size']:
         msg = f"Pixel size mismatch {info[1]['Pixelsize']} {args['pixel_size']}"
         raise RuntimeError(msg)
 
     if args['picked_locs']:
         picked_locs, old_info = io.load_locs(args['picked_locs'])
         picked_locs = pd.DataFrame.from_records(picked_locs)
-
-        locs = locs.merge(picked_locs, on=['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy'])
+        merge_cols = ['x', 'y', 'photons', 'bg', 'lpx', 'lpy', 'net_gradient', 'iterations', 'frame', 'likelihood', 'sx', 'sy']
+        picked_cols = set(picked_locs).intersection(set(locs))
+        merge_cols = list(filter(lambda x: x in picked_cols, merge_cols))
+        locs = locs.merge(picked_locs, on=merge_cols)
     locs['clusterID'] = locs['group']
     locs['z'] = locs['z [nm]'] / args['pixel_size']
+
+    spots = spots[locs['spot_idx'].to_numpy()]
+    locs['spot_idx'] = np.arange(locs.shape[0])
     # if args['picked_locs']:
     #     locs.to_hdf(args['locs'].replace('.hdf5', '_merge_picked.hdf5'), key='locs')
-    return locs
+    return locs, spots
 
 def gen_z_histplot(locs, args):
     sns.histplot(locs['z [nm]'])
@@ -454,11 +510,11 @@ def main(args):
     # Save a copy of this script for reproducibility
     shutil.copy(os.path.abspath(__file__), os.path.join(args['outdir'], 'render_nup.py.bak'))
 
-    locs = load_and_pick_locs(args)
-    
+    locs, spots = load_and_pick_locs(args)
+
     gen_z_histplot(locs, args)
 
-    write_nup_plots(locs, args, good_dir, other_dir)
+    write_nup_plots(locs, spots, args, good_dir, other_dir)
     print('Wrote dirs:')
     print(f'\t- {os.path.abspath(good_dir)}')
     print(f'\t- {os.path.abspath(other_dir)}')
@@ -471,12 +527,13 @@ def parse_args():
     # parser.add_argument('-px', '--pixel-size', default=86, type=int)
     parser.add_argument('-p', '--picked-locs')
     parser.add_argument('-o', '--outdir', default='./nup_renders3')
-    parser.add_argument('-os', '--oversample', default=30, type=int)
+    parser.add_argument('-os', '--oversample', default=10, type=int)
     parser.add_argument('-mb', '--min-blur', default=0.001, type=float)
     parser.add_argument('-b', '--blur-method', default='gaussian')
     parser.add_argument('--filter-locs', action='store_true')
-    parser.add_argument('-k', '--kde-factor', default=0.5, type=float)
+    parser.add_argument('-k', '--kde-bandwidth', default=0.25, type=float)
     parser.add_argument('--no-wandb', action='store_true')
+    parser.add_argument('--no-render', action='store_true')
     return vars(parser.parse_args())
 
 def find_matching_runs(hyper_params):

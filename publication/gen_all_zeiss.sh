@@ -56,11 +56,11 @@ cd $OUTDIR && echo $PWD &&
 python3 /home/miguel/Projects/smlm_z/publication/localise_exp_sample.py -l $DEFAULT_LOCS -s $DEFAULT_SPOTS -mo . -o $NUP_OUTDIR;
 
 
-echo $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5
-python3 /home/miguel/Projects/smlm_z/publication/undrift_z.py $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5 --rcc 500;
+# echo $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5
+# python3 /home/miguel/Projects/smlm_z/publication/undrift_z.py $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5 --rcc 500;
 
-cd $OUTDIR/$NUP_OUTDIR && echo $PWD &&
-python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUTDIR/$NUP_OUTDIR/locs_3d_undrift_z.hdf5 -p $PICKED --kde-factor $KDE_FACTOR;
+# cd $OUTDIR/$NUP_OUTDIR && echo $PWD &&
+# python3 /home/miguel/Projects/smlm_z/publication/render_nup.py -l $OUTDIR/$NUP_OUTDIR/locs_3d_undrift_z.hdf5 -p $PICKED --kde-factor $KDE_FACTOR;
 
 
 # RCC, n_good, mean_sep, sep_std

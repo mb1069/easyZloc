@@ -224,6 +224,10 @@ def write_locs(locs, z_coords, args):
     if dest_yaml:
         print(f'\t- {os.path.abspath(dest_yaml)}')
 
+def write_spots(spots, args):
+    spots_path = os.path.join(args['outdir'], 'spots.hdf5')
+    with h5py.File(spots_path, 'w') as f:
+        f.create_dataset(name='spots', data=spots)
 
 def write_report_data(args):
     report_data = {
@@ -242,7 +246,7 @@ def extract_fov(spots, locs):
     locs = locs.iloc[idx]
     return spots, locs
 
-def tmp_filter_locs(new_locs, spots, args):
+def pick_locs(new_locs, spots, args):
     picked_locs = pd.read_hdf(args['picked_locs'], key='locs')
 
     new_locs.reset_index(inplace=True, drop=False)
@@ -281,17 +285,17 @@ def main(args):
     with h5py.File(args['spots'], 'r') as f:
         spots = np.array(f['spots']).astype(np.uint16)
 
-    spots = (spots * args['gain'] / args['sensitivity']) + args['baseline']
+    # spots = (spots * args['gain'] / args['sensitivity']) + args['baseline']
 
     # TODO remove temp subset of locs
     if args['picked_locs']:
-        locs, spots = tmp_filter_locs(locs, spots, args)
+        locs, spots = pick_locs(locs, spots, args)
 
     print(locs.shape, spots.shape)
 
-    idx = np.argwhere(locs['net_gradient']>5000).squeeze()
-    locs = locs.iloc[idx]
-    spots = spots[idx]
+    # idx = np.argwhere(locs['net_gradient']>5000).squeeze()
+    # locs = locs.iloc[idx]
+    # spots = spots[idx]
 
     assert locs.shape[0] == spots.shape[0]
     if XLIM or YLIM:
@@ -302,8 +306,9 @@ def main(args):
     coords = apply_coords_norm(locs[['x', 'y']].to_numpy(), args)
 
     z_coords = pred_z(model, spots, coords, args, zrange, im_size, img_norm)
-
+    assert locs.shape[0] == spots.shape[0]
     write_locs(locs, z_coords, args)
+    write_spots(spots, args)
 
 
 def preprocess_args(args):
