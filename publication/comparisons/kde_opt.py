@@ -3,25 +3,17 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from glob import glob
-import os
-import re
-from scipy.stats import gaussian_kde
 import warnings
 import numpy as np
-from picasso.render import render
 from scipy.signal import find_peaks
 
 from tables import NaturalNameWarning
 warnings.filterwarnings('ignore', category=NaturalNameWarning)
 
-from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 import matplotlib.font_manager as fm
 fontprops = fm.FontProperties(size=14)
-from scipy.optimize import minimize
-from sklearn.decomposition import PCA
 from tqdm import tqdm
-from gen_comparison_plots import is_good_reconstruction, check_2d_fit
+from gen_comparison_plots import is_good_reconstruction
 from sklearn.neighbors import KernelDensity
 
 class ResultDir:
@@ -131,7 +123,6 @@ groups = sorted(list(set().union(*[set(res.df['group']) for res in ress])))
 
 # kdes = np.linspace(0.1, 0.7, 10)
 bandwidths = list(map(int, np.linspace(5, 30, 20)))
-# bandwidths = [15, 20]
 
 def test_kde(args):
     res, kde_factor = args
@@ -142,7 +133,7 @@ from itertools import product
 from multiprocessing import Pool
 
 arg_combis = list(product(ress, bandwidths))
-with Pool(1) as p:
+with Pool(8) as p:
     r = list(tqdm(p.imap(test_kde, arg_combis), total=len(arg_combis)))
 
 all_r = []

@@ -272,16 +272,19 @@ def write_nup_plots(locs, args, good_dir, other_dir):
     bimodal_fit_col_idx = cols.reindex(['bimodal_fit'])
 
     for cid in set(locs['clusterID']):
-        # if not cid in [9]:
-        #     continue
+        if not cid in list(range(10)):
+            continue
         print('Cluster ID', cid, end='')
         df = locs[locs['clusterID']==cid]
         df = align_x_axis(df)
+        # df = df[df['sx']>(75/106)]
+        # df = df[df['sy']>(75/106)]
+        # df = df[df['iterations']<1000]
         print(df.shape)
         # df = df[df['net_gradient'] > 3000]
         # if args['filter_locs']:
         #     df = filter_locs(df).copy()
-        # df = crop_z_view(df)
+        df = crop_z_view(df)
 
         if df.shape[0] < 5:
             print('No remaining localisations, continuing...')
@@ -331,7 +334,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
         scores = kde(z_peaks)
 
-        density_cutoff = max(scores) * 0.75
+        density_cutoff = max(scores) * 0
 
         df['density'] = kde(df['z [nm]'].to_numpy())
         x = [df['z [nm]'].min(), df['z [nm]'].max()]
@@ -359,12 +362,12 @@ def write_nup_plots(locs, args, good_dir, other_dir):
             bad_nup += 1
             continue
         ax1 = fig.add_subplot(gs[0, 0])
-        render_locs(df.copy(deep=True), args, (0,0,0), barsize=1000, ax=ax1, viewport_margin=2)
+        render_locs(orig_df.copy(deep=True), args, (0,0,0), barsize=1000, ax=ax1, viewport_margin=1)
         ax2 = fig.add_subplot(gs[0, 1])
-        render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=500, ax=ax2, viewport_margin=2)
+        render_locs(df.copy(deep=True), args, (np.pi/2,0,0), barsize=500, ax=ax2, viewport_margin=1)
 
         ax3 = fig.add_subplot(gs[0, 2])
-        render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=500, ax=ax3, viewport_margin=2)
+        render_locs(df.copy(deep=True), args, (0, np.pi/2,0), barsize=500, ax=ax3, viewport_margin=1)
         # if color_by_depth:
         #     color_histplot(histplot, cmap_min_z, cmap_max_z)
         # sns.kdeplot(data=df, x='z [nm]', ax=ax4, bw_adjust=0.5, color='black', bw_method='silverman')
@@ -452,7 +455,7 @@ def write_nup_plots(locs, args, good_dir, other_dir):
 
 def prep_dirs(args):
 
-    shutil.rmtree(args['outdir'], ignore_errors=True)
+    # shutil.rmtree(args['outdir'], ignore_errors=True)
     os.makedirs(args['outdir'], exist_ok=True)
 
     good_dir = os.path.join(args['outdir'], 'good_results')
