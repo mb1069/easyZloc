@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools >= 70.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages]
+find = {}
+
+[project]
+name = "smlm_3d"
+version = "0.1.0"
+dynamic = ["dependencies"]
+
+requires-python = ">=3.10"
+authors = [
+  {name = "Miguel A. Boland", email = "migueldboland@gmail.com"},
+]
+maintainers = [
+]
+description = ""
+readme = "README.md"
+license = {file = "LICENSE.txt"}
+keywords = []
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[project.urls]
+Homepage = "https://github.com/mb1069/smlm_3d"
+
+[project.scripts]
+smlm-prep-data = "publication.prep_data:run_tool"
+smlm-train-model = "publication.train_model:run_tool"
+smlm-localise = "publication.localise_exp_sample:run_tool"
+smlm-undrift-z = "publication.undrift_z:run_tool"

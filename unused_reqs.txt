@@ -16,7 +16,6 @@ beautifulsoup4==4.12.2
 binaryornot==0.4.4
 bleach==6.1.0
 blinker==1.6.3
-blosc2==2.2.9
 build==1.0.3
 cachetools==4.2.4
 certifi==2023.7.22
@@ -133,7 +132,7 @@ parso==0.8.3
 partd==1.4.1
 patsy==0.5.3
 pexpect==4.8.0
--e git+ssh://git@github.com/mb1069/picasso.git@8426ddcffdb55659b70caf275d4b2eea15afbdd9#egg=picassosr
+picassosr==0.7.0
 pickleshare==0.7.5
 Pillow==9.2.0
 PIMS==0.6.1
@@ -145,7 +144,7 @@ pluggy==1.0.0
 proglog==0.1.10
 prometheus-client==0.17.1
 prompt-toolkit==3.0.39
-protobuf==4.24.4
+protobuf<=3.20.0
 psutil==5.9.5
 ptyprocess==0.7.0
 pure-eval==0.2.2

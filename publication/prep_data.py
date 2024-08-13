@@ -23,10 +23,11 @@ from scipy.interpolate import UnivariateSpline
 from scipy.ndimage import gaussian_filter
 import json
 import shutil
-from util.util import grid_psfs
 import seaborn as sns
 import tensorflow as tf
-from generate_spots import main as main_gen_spots
+
+from publication.generate_spots import main as main_gen_spots
+from publication.util.util import grid_psfs
 
 def norm_zero_one(s):
     max_s = s.max()
@@ -665,7 +666,7 @@ def parse_args():
     parser = ArgumentParser(description='')
     parser.add_argument('bead_stacks', help='Path to TIFF bead stacks / directory containing bead stacks.')
     parser.add_argument('-z', '--z_step', help='Overwrite metadata z step size (nm)', type=int)
-    parser.add_argument('--zrange', help='Maximum z-range (+- value) over which to extract bead data (nm)', type=int, default=2000)
+    parser.add_argument('--zrange', help='Maximum z-range (+- value) over which to extract bead data (nm)', type=int, default=1000)
     parser.add_argument('-px', '--pixel_size', help='Overwrite metadata Pixel size (nm)', type=int)
     parser.add_argument('-g', '--gradient', help='Min. net gradient', default=1000, type=int)
     parser.add_argument('-b', '--box-size-length', help='Box size', default=15, type=int)

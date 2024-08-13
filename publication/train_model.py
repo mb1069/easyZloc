@@ -866,9 +866,8 @@ def init_wandb(args):
         settings=wandb.Settings(code_dir=code_dir)
     )
 
-if __name__ == '__main__':
+def run_tool():
     args = parse_args()
-    
     
     i = 1
     base_outdir = args['outdir']
@@ -876,6 +875,7 @@ if __name__ == '__main__':
         args['outdir'] = f'{base_outdir}_{i}'
         # shutil.rmtree(args['outdir'])
         i += 1
+    print(f'Saving data to {outdir}')
     os.makedirs(args['outdir'], exist_ok=True)
 
     # tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
@@ -884,3 +884,7 @@ if __name__ == '__main__':
     init_wandb(args)
     main(args)
     wandb.finish()
+
+if __name__ == '__main__':
+    run_tool()
+    

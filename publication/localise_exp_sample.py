@@ -18,11 +18,12 @@ import pandas as pd
 import h5py
 import numpy as np
 import seaborn as sns
+import matplotlib
+matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from picasso import io
-import yaml
 
 from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
 
@@ -356,11 +357,12 @@ def parse_args():
     return args
 
 
-if __name__=='__main__':
-    import matplotlib
-    matplotlib.use('Agg')
+def run_tool():
     args = parse_args()
     main(args)
+
+if __name__=='__main__':
+    run_tool()
 
 
 # # Johnny mitochondria data

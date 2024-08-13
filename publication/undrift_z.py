@@ -96,7 +96,9 @@ def parse_args():
     parser.add_argument('--n-frames', type=int, default=500, help='N frames per chunk to estimate drift')
     return parser.parse_args()
 
-
-if __name__ == '__main__':
+def run_tool():
     args = vars(parse_args())
     main(args)
+
+if __name__ == '__main__':
+    run_tool()
