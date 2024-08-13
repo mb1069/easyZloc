@@ -58,19 +58,16 @@ def load_yaml(yaml_path):
         return config
 
 
-def write_locs(locs, locs_path, yaml_path):
+def write_locs(locs, locs_path):
     if 'index' in locs:
         del locs['index']   
-    out_locs_path = locs_path.replace('.hdf5', '_alt.hdf5')
+    out_locs_path = locs_path.replace('.hdf5', '.hdf5')
     with h5py.File(out_locs_path, "w") as locs_file:
         locs_file.create_dataset("locs", data=locs.to_records())
-    print(out_locs_path)
-    out_yaml_path = out_locs_path.replace('.hdf5', '.yaml')
-    shutil.copy(yaml_path, out_yaml_path)
 
 
 def write_spots(spots, locs_path):
-    spots_path = locs_path.replace('locs', 'spots_alt')
+    spots_path = locs_path.replace('locs', 'spots')
     with h5py.File(spots_path, 'w') as f:
         f.create_dataset('spots', data=spots)
     print(spots_path)
@@ -82,8 +79,9 @@ def main(args):
     locs = pd.read_hdf(args['locs'], key='locs')
     wrapper = ImageSequenceWrapper(args['img'], config['Box Size'])
     locs, spots = wrapper.extract_spots(locs)
+    print(locs.shape, spots.shape)
 
-    write_locs(locs, args['locs'], yaml_path)
+    write_locs(locs, args['locs'])
     write_spots(spots, args['locs'])
 
 

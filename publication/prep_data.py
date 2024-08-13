@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 from glob import glob
 from natsort import natsorted
 import subprocess
@@ -9,8 +10,7 @@ pd.options.mode.chained_assignment = None
 
 import numpy as np
 from sklearn.metrics import euclidean_distances
-from tifffile import imread, imwrite, TiffFile
-from skimage.feature import match_template
+from tifffile import imwrite, TiffFile
 from skimage.filters import butterworth
 from skimage.filters import gaussian
 import matplotlib.pyplot as plt
@@ -26,12 +26,13 @@ import shutil
 from util.util import grid_psfs
 import seaborn as sns
 import tensorflow as tf
-
+from generate_spots import main as main_gen_spots
 
 def norm_zero_one(s):
     max_s = s.max()
     min_s = s.min()
     return (s - min_s) / (max_s - min_s)
+
 
 def validate_args(args):
     args['bead_stacks'] = [b for b in args['bead_stacks'] if ('ignored' not in b and 'combined' not in b)]
@@ -51,6 +52,7 @@ def test_picasso_exec():
         print('\n')
         raise EnvironmentError('Picasso not found/working (see above)')
 
+
 def transform_args(args):
     fnames = glob(f"{args['bead_stacks']}/**/*.tif", recursive=True)
 
@@ -61,13 +63,17 @@ def transform_args(args):
     args['gaussian_blur'] = list(map(int, args['gaussian_blur'].split(',')))
     return args
 
+
 def get_or_create_slice(bead_stack, slice_path):
     if not os.path.exists(slice_path):
-        im_slice = bead_stack[bead_stack.shape[0]//2]
+        print(bead_stack.shape)
+        peak_idx = np.argmax(bead_stack.max(axis=(1,2))).squeeze()
+        im_slice = bead_stack[peak_idx]
         # plt.imshow(im_slice)
         # plt.show()
         imwrite(slice_path, im_slice.astype(np.uint16))
     return slice_path
+
 
 def get_or_create_locs(slice_path, pixel_size, args):
     spots_path = slice_path.replace('.ome.tif', '.ome_spots.hdf5')
@@ -89,13 +95,16 @@ def get_or_create_locs(slice_path, pixel_size, args):
             return
         tqdm.write('finished!')
 
+    if not os.path.exists(spots_path) or True:
+        main_gen_spots({'locs': locs_path, 'img': slice_path})
+
     with h5py.File(spots_path) as f:
         spots = np.array(f['spots'])
-
     locs = pd.read_hdf(locs_path, key='locs')
     locs['fname'] = '___'.join(slice_path.split('/')[-3:])
     print(f'Found {locs.shape[0]} beads')
     return locs, spots
+
 
 def remove_edge_spots(locs, spots, xsize, ysize, args):
     margin = args['box_size_length'] * (2/3)
@@ -108,7 +117,6 @@ def remove_edge_spots(locs, spots, xsize, ysize, args):
     crit &= (locs['y']+margin <= ylim)
     valid_idx = np.argwhere(crit)[:, 0]
     return locs.iloc[valid_idx], spots[valid_idx]
-
 
 
 def remove_colocal_beads(locs, spots, args):
@@ -320,8 +328,7 @@ def realign_beads(psfs, df, z_step):
     return psfs, df
 
 
-def filter_mse_xy(stack, max_mse, i):
-    # Define a 2D Gaussian function
+def filter_2d_gaussian(image, max_mse):
     def gaussian_2d(xy, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
         x, y = xy
         xo = float(xo)
@@ -331,11 +338,6 @@ def filter_mse_xy(stack, max_mse, i):
         c = (np.sin(theta)**2) / (2 * sigma_x**2) + (np.cos(theta)**2) / (2 * sigma_y**2)
         g = offset + amplitude * np.exp(- (a * ((x - xo)**2) + 2 * b * (x - xo) * (y - yo) + c * ((y - yo)**2)))
         return g.ravel()
-
-    sharp = reduce_img(stack)
-    idx = np.argmax(sharp)
-    image = stack[idx]
-
 
     # Load and preprocess the image (e.g., convert to grayscale)
     # For simplicity, let's generate a simple image for demonstration
@@ -366,33 +368,20 @@ def filter_mse_xy(stack, max_mse, i):
     render = gaussian_2d((x, y), *popt).reshape(image.shape)
 
     error = skl_mean_squared_error(render, image)
-
-    # if error > max_mse:
-    #     print(i)
-    #     # Visualize the original image and the fitted Gaussian
-    #     plt.plot(sharp)
-    #     plt.show()
-    #     plt.figure(figsize=(5, 3))
-    #     plt.subplot(1, 2, 1)
-    #     plt.imshow(image)
-    #     plt.title('Original Image')
-        
-    #     plt.subplot(1, 2, 2)
-    #     plt.imshow(render)
-    #     plt.title('Fitted Gaussian')
-        
-    #     plt.tight_layout()
-    #     plt.show()
-    #     print(error, max_mse, error <= max_mse)
-
     return error <= max_mse
+
+def filter_mse_xy(stack, max_mse):
+    sharp = reduce_img(stack)
+    idx = np.argmax(sharp)
+    image = stack[idx]
+    return filter_2d_gaussian(image, max_mse)
 
 
 def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
     print('Removing poorly imaged beads...', end='')
     # Filter by SNR threshold
 
-    mse_xy = np.array([filter_mse_xy(psf, 5000, i) for i, psf in enumerate(stacks)])
+    mse_xy = np.array([filter_mse_xy(psf, 5000) for psf in stacks])
     snrs = np.array([snr(psf) > args['min_snr'] for psf in stacks])
     fwhms = np.array([has_fwhm(psf, args) for psf in stacks])
     mse_z = np.array([filter_mse_zprofile(psf, z_step, i) for i, psf in enumerate(stacks)])
@@ -589,9 +578,10 @@ def main(args):
         #     continue
         tqdm.write(f'Preparing {os.path.basename(bead_stack_path)}')
         img_handle = TiffFile(bead_stack_path)
+        metadata = img_handle.imagej_metadata
+        tags = img_handle.pages[0].tags
         bead_stack = img_handle.asarray()
         img_handle.close()
-        metadata = img_handle.imagej_metadata
 
         if 'spacing' in metadata:
             direction = metadata['spacing'] > 0
@@ -610,7 +600,7 @@ def main(args):
                     raise RuntimeError('Varying z_step not supported')
 
         if not args.get('pixel_size'):
-            _px_size = round(get_pixel_size(img_handle.pages[0].tags))
+            _px_size = round(get_pixel_size(tags))
             if px_size is None:
                 px_size = _px_size
                 print(f'Setting pixel size to {px_size}nm.')
@@ -625,13 +615,6 @@ def main(args):
         else:
             assert xsize == bead_stack.shape[2]
             assert ysize == bead_stack.shape[1]
-        # bead_stack = None
-        # for func in [imread, read_multipage_tif]:
-        #     try:
-        #         bead_stack = func(bead_stack_path)
-        #     except Exception as e:
-        #         print(e)
-        
         if bead_stack is None:
             print(f'Failed to read {bead_stack_path}')
             continue
@@ -686,6 +669,7 @@ def parse_args():
     parser = ArgumentParser(description='')
     parser.add_argument('bead_stacks', help='Path to TIFF bead stacks / directory containing bead stacks.')
     parser.add_argument('-z', '--z_step', help='Overwrite metadata z step size (nm)', type=int)
+    parser.add_argument('--zrange', help='Maximum z-range (+- value) over which to extract bead data (nm)', type=int, default=2000)
     parser.add_argument('-px', '--pixel_size', help='Overwrite metadata Pixel size (nm)', type=int)
     parser.add_argument('-g', '--gradient', help='Min. net gradient', default=1000, type=int)
     parser.add_argument('-b', '--box-size-length', help='Box size', default=15, type=int)
@@ -703,8 +687,20 @@ def parse_args():
     return args
 
 
+def check_path(args):
+    dirpath = args['bead_stacks']
+    if os.path.exists(dirpath):
+        print('Bead directory exists')
+        return args
+    elif '/' in dirpath:
+        raise ValueError(f'{dirpath} not found, check Windows vs UNIX pathing')
+    else:
+        raise ValueError(f'{dirpath} not found')
+
+
 if __name__ == '__main__':
     args = parse_args()
+    args = check_path(args)
     print(args)
     test_picasso_exec()
     args = transform_args(args)
