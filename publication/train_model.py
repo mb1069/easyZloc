@@ -45,7 +45,18 @@ import gc
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
-
+AVAILABLE_MODELS = {
+    'vit_b16': vit.vit_b16,
+    'vit_b32': vit.vit_b32,
+    'vit_l16': vit.vit_l16,
+    'vit_l32': vit.vit_l32,
+    'mobilenet': keras.applications.MobileNetV3Small,
+    'mobilenet_large': keras.applications.MobileNetV3Large,
+    'vgg': keras.applications.VGG19,
+    'resnet': keras.applications.ResNet50V2,
+    'resnet_large': keras.applications.ResNet101V2,
+    'efficientnet_v2s': keras.applications.EfficientNetV2S
+}
 
 
 def load_data(args):
@@ -282,18 +293,7 @@ def get_model(args):
 
     x_coords = layers.Dense(64)(x_coords)
    
-    model_version = {
-        'vit_b16': vit.vit_b16,
-        'vit_b32': vit.vit_b32,
-        'vit_l16': vit.vit_l16,
-        'vit_l32': vit.vit_l32,
-        'mobilenet': keras.applications.MobileNetV3Small,
-        'mobilenet_large': keras.applications.MobileNetV3Large,
-        'vgg': keras.applications.VGG19,
-        'resnet': keras.applications.ResNet50V2,
-        'resnet_large': keras.applications.ResNet101V2,
-        'efficientnet_v2s': keras.applications.EfficientNetV2S
-    }[args['architecture']]
+    model_version = AVAILABLE_MODELS[args['architecture']]
 
     if 'vit_' in args['architecture']:
         feat_model = model_version(image_size=args['image_size'], 
@@ -519,6 +519,8 @@ def write_report(model, locs, train_data, val_data, test_data, args):
 
         plt.title(fname)
         ax1.scatter(z, preds)
+        ax1.set_xlabel('True Z position (nm)')
+        ax1.set_ylabel('Predicted Z pos (nm)')
         ds_df = pd.DataFrame.from_dict({'x': coords[:, 0], 'y': coords[:, 1], 'error': errors})
         ds_df = ds_df.groupby(['x', 'y']).mean().reset_index()
 
@@ -578,7 +580,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax4.scatter(gcoords[0], gcoords[1])
             ax4.set_xlabel('x (nm)')
             ax4.set_ylabel('y (nm)')
-            ax4.set_title('2d loc within dataset')
+            ax4.set_title('Position of bead within dataset')
 
             sorted_idx = np.argsort(z_vals)
             ax5.plot(z_vals[sorted_idx], group_images.max(axis=(1,2,3))[sorted_idx])
@@ -794,13 +796,13 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--project', default='autofocus')
+    parser.add_argument('--project', default='smlm_z')
 
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
     parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
     parser.add_argument('-sc', '--stacks_config', help='JSON config file for stacks file (can be automatically found if in same dir)', default='./stacks_config.json')
     # parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
-    parser.add_argument('-zrange', '--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
+    parser.add_argument('--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
     # parser.add_argument('-m', '--pretrained-model', help='Start training from existing model (path)')
     parser.add_argument('-o', '--outdir', help='Output directory', default='./out')
 
@@ -815,7 +817,7 @@ def parse_args():
     parser.add_argument('--image_size', type=int, default=64, help='Resize PSFs to this size for model')
     parser.add_argument('--dense1', type=int, default=128)
     parser.add_argument('--dense2', type=int, default=64)
-    parser.add_argument('--architecture', default='vit_b16')
+    parser.add_argument('--architecture', default='mobilenet', choices=sorted(list(AVAILABLE_MODELS.keys())))
     parser.add_argument('--activation')
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.0001)
 
