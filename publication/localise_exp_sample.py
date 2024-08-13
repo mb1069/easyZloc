@@ -200,8 +200,7 @@ def pred_z(model, spots, coords, args, zrange, im_size, img_norm):
 
 def write_locs(locs, z_coords, args):
     locs['z [nm]'] = z_coords
-    locs['z'] = locs['z [nm]']
-    # locs['z'] = z_coords / args['pixel_size']
+    locs['z'] = z_coords / args['pixel_size']
     locs['x [nm]'] = locs['x'] * args['pixel_size']
     locs['y [nm]'] = locs['y'] * args['pixel_size']
 
