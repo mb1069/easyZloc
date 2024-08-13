@@ -408,15 +408,14 @@ def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
 
     est_bead_offsets(stacks, locs, z_step, args)
 
-
     if args['debug']:
         rejected_idx = np.argwhere(np.invert(snrs & fwhms & mse_z & mse_xy))[:, 0]
         print('\n', 'Rejected: ', rejected_idx)
 
         if len(rejected_idx):
             print('Writing rejected figures...')
-
-            write_stack_figures(stacks[rejected_idx], locs.iloc[rejected_idx], rejected_outpath)
+            print('Test1', 'offset' in list(locs))
+            write_stack_figures(stacks[rejected_idx], locs.iloc[rejected_idx], rejected_outpath, z_step)
 
     spots = spots[idx]
     locs = locs.iloc[idx]
@@ -463,7 +462,7 @@ def write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args):
     print(f'Total beads: {locs.shape[0]}')
 
 
-def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname):
+def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname, z_step):
     stack = stacks[i]
     loc = locs.iloc[i].to_dict()
 
@@ -484,8 +483,8 @@ def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname):
     intensity = norm_zero_one(intensity)
     min_val = min(intensity)
     max_val = max(intensity)
-    frame_zpos = (np.arange(len(intensity)) * args['z_step']) - loc['offset']
-    ax2.plot(frame_zpos, intensity)
+    frame_zpos = (np.arange(len(intensity)) * z_step) - loc['offset']
+    ax2.plot(frame_zpos, intensity, label='This bead')
     ax2.vlines(0, min_val, max_val, colors='orange')
 
     # Plot alignment ref bead
@@ -493,8 +492,8 @@ def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname):
     intensity = norm_zero_one(intensity)
     min_val = min(intensity)
     max_val = max(intensity)
-    frame_zpos = (np.arange(len(intensity)) * args['z_step']) - locs.iloc[central_bead_idx].to_dict()['offset']
-    ax2.plot(frame_zpos, intensity)
+    frame_zpos = (np.arange(len(intensity)) * z_step) - locs.iloc[central_bead_idx].to_dict()['offset']
+    ax2.plot(frame_zpos, intensity, label='Alignment reference bead')
 
     ax2.set_title('Max normalised pixel intensity over z')
     ax2.set_xlabel('z (nm)')
@@ -518,14 +517,14 @@ from multiprocessing import Pool
 from itertools import repeat
 
 
-def write_stack_figures(stacks, locs, outpath):
+def write_stack_figures(stacks, locs, outpath, z_step):
     fname = set(locs['fname']).pop().replace('.ome.tif', '')
     os.makedirs(outpath, exist_ok=True)
 
     idx = np.arange(stacks.shape[0])
     central_bead_idx = get_central_bead_idx(locs)
     with Pool(8) as pool:
-        res = pool.starmap(write_stack_figure, zip(idx, repeat(central_bead_idx), repeat(stacks), repeat(locs), repeat(outpath), repeat(fname)))
+        res = pool.starmap(write_stack_figure, zip(idx, repeat(central_bead_idx), repeat(stacks), repeat(locs), repeat(outpath), repeat(fname), repeat(z_step)))
 
 # def filter_by_tmp_locs(locs, spots):
 #     original_locs = pd.read_hdf('/home/miguel/Projects/smlm_z/publication/original_locs.hdf', key='locs')
@@ -559,7 +558,7 @@ def main(args):
     all_spots = []
     all_locs = []
 
-    found_beads = 0
+    n_total_beads = 0
     retained_beads = 0
 
     rejected_outpath = os.path.join(args['outpath'], 'combined', 'rejected')
@@ -624,8 +623,7 @@ def main(args):
 
         raw_locs, spots = get_or_create_locs(slice_path, px_size, args)
         
-        # raw_locs, spots = filter_by_tmp_locs(raw_locs, spots)
-        found_beads += raw_locs.shape[0]
+        n_total_beads += raw_locs.shape[0]
         locs, spots = remove_colocal_beads(raw_locs, spots, args)
         locs, spots = remove_edge_spots(locs, spots, xsize, ysize, args)
         perc_removed = round(100*(1-(locs.shape[0]/raw_locs.shape[0])), 2)
@@ -639,7 +637,7 @@ def main(args):
         all_spots.append(spots)
         all_locs.append(locs)
 
-    print(f'Found {found_beads} total beads')
+    print(f'Found {n_total_beads} total beads')
     min_stack_length = min(list(map(lambda s: s.shape[1], all_stacks)))
     stacks = [s[:, :min_stack_length] for s in all_stacks]
     locs = pd.concat(all_locs)
@@ -654,15 +652,13 @@ def main(args):
     # locs = pd.concat((locs, locs))
     # stacks = np.concatenate((stacks, stacks))
 
-    print(locs.shape)
-    print(stacks.shape)
     print(f'Kept {locs.shape[0]} total beads')
 
     write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args)
 
     if args['debug']:
         outpath = os.path.join(args['outpath'], 'combined', 'debug')
-        write_stack_figures(stacks.mean(axis=-1), locs, outpath)
+        write_stack_figures(stacks.mean(axis=-1), locs, outpath, z_step)
         
 
 def parse_args():
