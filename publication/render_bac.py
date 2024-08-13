@@ -272,11 +272,11 @@ def write_nup_plots(locs, args, good_dir, other_dir):
     bimodal_fit_col_idx = cols.reindex(['bimodal_fit'])
 
     for cid in set(locs['clusterID']):
-        if not cid in list(range(10)):
-            continue
+        # if not cid in [0]:
+        #     continue
         print('Cluster ID', cid, end='')
         df = locs[locs['clusterID']==cid]
-        df = align_x_axis(df)
+        # df = align_x_axis(df)
         # df = df[df['sx']>(75/106)]
         # df = df[df['sy']>(75/106)]
         # df = df[df['iterations']<1000]

@@ -444,7 +444,7 @@ def train_model(train_data, val_data, args):
         print('\nInterrupted training\n')
         history = None
 
-    model.save(os.path.join(args['outdir'], './latest_vit_model3'))
+    model.save(os.path.join(args['outdir'], './model'))
 
     print('Finished!')
 
@@ -555,8 +555,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax1 = fig.add_subplot(gs[:, 0])
             ax2 = fig.add_subplot(gs[0, 1])
             ax3 = fig.add_subplot(gs[1, 1])
-            ax4 = fig.add_subplot(gs[2, 1])
-            ax5 = fig.add_subplot(gs[3, 1])
+            ax4 = fig.add_subplot(gs[2:4, 1])
 
 
             fig.suptitle(f'Bead: {num}')
@@ -569,10 +568,12 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             
             ax2.imshow(grid_psfs(group_images.mean(axis=-1)).T)
             ax2.set_title('Ordered by frame')
+            ax2.set_axis_off()
 
             ax3.imshow(grid_psfs(group_images[np.argsort(error)].mean(axis=-1)).T)
             ax3.set_title('Ordered by increasing prediction error')
             ax3.set_xlabel(f'min error: {str(round(min(error), 2))}, max error: {str(round(max(error), 2))}')
+            ax3.set_axis_off()
 
             
             ax4.scatter(coords[:, 0], coords[:, 1])
@@ -581,14 +582,9 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax4.set_xlabel('x (nm)')
             ax4.set_ylabel('y (nm)')
             ax4.set_title('Position of bead within dataset')
+            ax4.axis('equal')
 
-            sorted_idx = np.argsort(z_vals)
-            ax5.plot(z_vals[sorted_idx], group_images.max(axis=(1,2,3))[sorted_idx])
-            ax5.set_title('Max normalised pixel intensity over z')
-            ax5.set_xlabel('z (frame)')
-            ax5.set_ylabel('pixel intensity')    
-                
-
+    
             # wandb.log({img_fname: wandb.Image(outpath)})
 
             if dirname != 'train':

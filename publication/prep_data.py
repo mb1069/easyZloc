@@ -694,7 +694,7 @@ def check_path(args):
         raise ValueError(f'{dirpath} not found')
 
 
-if __name__ == '__main__':
+def run_tool():
     args = parse_args()
     args = check_path(args)
     print(args)
@@ -702,3 +702,6 @@ if __name__ == '__main__':
     args = transform_args(args)
     validate_args(args)
     main(args)
+
+if __name__ == '__main__':
+    run_tool()

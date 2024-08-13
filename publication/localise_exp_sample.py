@@ -314,7 +314,7 @@ def preprocess_args(args):
     if args['model_dir']:
             print('Using model dir from parameter -mo/--model-dir')
             dirname = os.path.abspath(args['model_dir'])
-            args['model'] = os.path.join(dirname, 'latest_vit_model3')
+            args['model'] = os.path.join(dirname, 'model')
             # args['datagen'] = os.path.join(dirname, 'datagen.gz')
             args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
 
