@@ -42,13 +42,10 @@ This will generate a new directory `<BEAD_STACK_DIR>/combined` with 3 files:
 -  `locs.hdf5`: localisation information of all the extracted beads
 -  `stacks_config.json`: debugging file containing details of parameters / files used to generate data
 
-  
-
 Use `--debug` to view debugging information for each extracted bead and rejected beads.
 
 `--regen` will re-run Picasso - this is useful if you need to change the localisation settings.
 
-  
 
 ### 2. Train model
 
@@ -59,6 +56,13 @@ Eg to train a model over a range of +- 1000nm and output the results into direct
 conda  activate  smlm_z;
 smlm-train-model  --zrange  1000  -o <OUT_DIR>
 ```
+You can safely ignore WandB (option 2 when prompted) or setup an account and track the performance of models trained on different bead stacks.
+If using wandb, additional tracking information can be provided, eg:
+```bash
+smlm-train-model --system <microscope_name> --dataset <training_dataset_name>
+```
+Larger Deep Learning architectures are available (default is MobileNetV3, see options for argument --architecture using `smlm-train-model -h`).
+
 
 ### 3. Localise experimental data
 
@@ -76,7 +80,6 @@ conda  activate  smlm_z;
 smlm-localize  -mo <OUT_DIR> -l <locs.hdf5> -s <spots.hdf5> -o <OUT_DIR>/out
 ```
 
-
 #### 3.3 Z undrifting
 
 Centroid-based undrifting is available using:
@@ -88,13 +91,9 @@ smlm-undrift-z  locs.hdf5
 
 Alternately, use `picasso undrift` to undrift by RCC.
 
-  
-
 ### 4. Post-processing scripts
 
 Post-processing scripts exist for bacteria, nuclear pore or tubulin datasets; these can be used to generate X/Y X/Z Y/Z profiles and histograms for ROIs selected from Picasso's render interface.
-
-  
 
 To select objects in a dataset, run the command below, pick objects and save picked localisalations.
 
@@ -104,8 +103,6 @@ picasso  render
 ```
 
 The saved localisation file can then be loaded into the following scripts:
-
-  
 
 ```bash
 conda  activate  smlm_z;
