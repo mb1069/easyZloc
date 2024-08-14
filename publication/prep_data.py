@@ -1,8 +1,9 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from itertools import repeat
 from multiprocessing import Pool
 from publication.util.util import grid_psfs, norm_zero_one
 from publication.generate_spots import main as main_gen_spots
-import tensorflow as tf
 import seaborn as sns
 import shutil
 import json
@@ -25,9 +26,8 @@ import subprocess
 from natsort import natsorted
 from glob import glob
 from argparse import ArgumentParser
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 pd.options.mode.chained_assignment = None
+import tensorflow as tf
 
 
 def test_picasso_exec():
