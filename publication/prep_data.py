@@ -1,6 +1,6 @@
 from itertools import repeat
 from multiprocessing import Pool
-from publication.util.util import grid_psfs
+from publication.util.util import grid_psfs, norm_zero_one
 from publication.generate_spots import main as main_gen_spots
 import tensorflow as tf
 import seaborn as sns
@@ -30,23 +30,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 pd.options.mode.chained_assignment = None
 
 
-def norm_zero_one(s):
-    max_s = s.max()
-    min_s = s.min()
-    return (s - min_s) / (max_s - min_s)
-
-
-def validate_args(args):
-    args['bead_stacks'] = [b for b in args['bead_stacks'] if ('ignored' not in b and 'combined' not in b)]
-    n_stacks = len(args['bead_stacks'])
-    print(f"Found {n_stacks} bead stacks")
-    if n_stacks == 0:
-        quit(1)
-    for f in natsorted(args['bead_stacks']):
-        print(f'\t - {f}')
-
-
 def test_picasso_exec():
+    # Checks Picasso can be run (i.e installation issues, library compatibility, etc)
     res = subprocess.run(['picasso', '-h'], capture_output=True, text=True)
     if res.returncode != 0:
         print(res.stdout)
@@ -56,28 +41,39 @@ def test_picasso_exec():
 
 
 def transform_args(args):
+    # Finds all tif files in path
     fnames = glob(f"{args['bead_stacks']}/**/*.tif", recursive=True)
 
     args['outpath'] = args['bead_stacks']
+
+    # Filter out intermediate / output tif files
     fnames = [os.path.abspath(f) for f in fnames if '_slice.ome.tif' not in f and os.path.basename(f) != 'stacks.ome.tif']
+    fnames = [b for b in fnames if ('ignored' not in b and 'combined' not in b)]
     args['bead_stacks'] = fnames
+
+    n_stacks = len(args['bead_stacks'])
+    print(f"Found {n_stacks} bead stacks")
+    if n_stacks == 0:
+        quit(1)
+    for f in natsorted(args['bead_stacks']):
+        print(f'\t - {f}')
 
     args['gaussian_blur'] = list(map(int, args['gaussian_blur'].split(',')))
     return args
 
 
 def get_or_create_slice(bead_stack, slice_path):
+    # Extract the brightest (i.e in-focus) slice from an image stack
     if not os.path.exists(slice_path):
-        print(bead_stack.shape)
         peak_idx = np.argmax(bead_stack.max(axis=(1, 2))).squeeze()
         im_slice = bead_stack[peak_idx]
-        # plt.imshow(im_slice)
-        # plt.show()
         imwrite(slice_path, im_slice.astype(np.uint16))
     return slice_path
 
 
 def get_or_create_locs(slice_path, pixel_size, args):
+    # Load locs+spots if they exist, or generate them using Picasso
+
     spots_path = slice_path.replace('.ome.tif', '.ome_spots.hdf5')
     locs_path = slice_path.replace('.ome.tif', '.ome_locs.hdf5')
 
@@ -109,6 +105,7 @@ def get_or_create_locs(slice_path, pixel_size, args):
 
 
 def remove_edge_spots(locs, spots, xsize, ysize, args):
+    # Removes spots on edge of image as a full-size ROI cannot be extracted
     margin = args['box_size_length'] * (2 / 3)
     xlim = xsize
     ylim = ysize
@@ -137,7 +134,8 @@ def remove_colocal_beads(locs, spots, args):
     return locs, spots
 
 
-def extract_training_stacks(locs, bead_stack, args) -> np.array:
+def extract_training_stacks(locs, bead_stack, args):
+    # Extracts stacks of beads from full FOV 
     spot_size = int(args['box_size_length'] / 2)
     stacks = []
     for loc in locs.to_dict(orient="records"):
@@ -152,30 +150,17 @@ def snr(psf):
     return psf.max() / np.median(psf)
 
 
-def has_fwhm(psf, args):
+def has_fwhm_z(psf):
     psf = butterworth(psf, cutoff_frequency_ratio=0.2, high_pass=False)
     y = np.max(gaussian(psf), axis=(1, 2))
     max_val = np.max(y)
     min_val = np.min(y)
     half_max = min_val + ((max_val - min_val) / 2)
     crossCount = np.sum((y[:-1] > half_max) != (y[1:] > half_max))
-    # if args['debug'] and crossCount < 2:
-    #     plt.plot(y, label='raw')
-    #     plt.plot([0, len(y)], [half_max, half_max])
-    #     plt.show()
-    # if not (crossCount >= 2):
-    #     fig = plt.figure(layout="constrained", figsize=(20, 15), dpi=64)
-    #     gs = plt.GridSpec(1, 2, figure=fig)
-    #     ax1 = fig.add_subplot(gs[0, 0])
-    #     ax2 = fig.add_subplot(gs[0, 1])
-
-    #     ax1.imshow(grid_psfs(psf, cols=20))
-    #     ax2.plot(psf)
-    #     plt.show()
     return crossCount >= 2
 
 
-def filter_mse_zprofile(psf, z_step, i):
+def filter_mse_zprofile(psf, z_step):
 
     # Define the skewed Gaussian function
     def skewed_gaussian(x, A, x0, sigma, alpha, offset):
@@ -282,7 +267,6 @@ def tf_eval_roll(ref_psf, psf, roll):
 
 
 def tf_find_optimal_roll(ref_tf, img):
-
     img_tf = tf.convert_to_tensor(img)
 
     roll_range = ref_tf.shape[0] // 4
@@ -310,6 +294,7 @@ def get_central_bead_idx(df):
 
 
 def realign_beads(psfs, df, z_step):
+    # Find relative offset in Z of beads relative to most central bead in FOV
     ref_idx = get_central_bead_idx(df)
     ref_offset = df.iloc[ref_idx]['offset']
 
@@ -330,6 +315,10 @@ def realign_beads(psfs, df, z_step):
 
 
 def filter_2d_gaussian(image, max_mse):
+    # Check 2D image of bead is approximately gaussian in shape
+    # Filters out images with co-local beads where one bead was not localised, or
+    # other statining/illumination issues
+
     def gaussian_2d(xy, amplitude, xo, yo, sigma_x, sigma_y, theta, offset):
         x, y = xy
         xo = float(xo)
@@ -362,7 +351,7 @@ def filter_2d_gaussian(image, max_mse):
     ]
 
     try:
-        popt, pcov = curve_fit(gaussian_2d, (x, y), image.ravel(), p0=p0, bounds=list(zip(*bounds)))
+        popt, _ = curve_fit(gaussian_2d, (x, y), image.ravel(), p0=p0, bounds=list(zip(*bounds)))
     except RuntimeError:
         print('XY fit failed')
         popt = p0
@@ -381,18 +370,14 @@ def filter_mse_xy(stack, max_mse):
 
 def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
     print('Removing poorly imaged beads...', end='')
-    # Filter by SNR threshold
 
+    # Eval all filters on all bead stacks
     mse_xy = np.array([filter_mse_xy(psf, 5000) for psf in stacks])
     snrs = np.array([snr(psf) > args['min_snr'] for psf in stacks])
-    fwhms = np.array([has_fwhm(psf, args) for psf in stacks])
-    mse_z = np.array([filter_mse_zprofile(psf, z_step, i) for i, psf in enumerate(stacks)])
-    # TODO re-enable
-    # mse_xy[:] = True
+    fwhms = np.array([has_fwhm_z(psf) for psf in stacks])
+    mse_z = np.array([filter_mse_zprofile(psf, z_step) for psf in stacks])
 
-    # snrs[:] = True
-    # mse_filters[:] = True
-
+    # Keep only beads which pass all filters
     idx = np.argwhere(snrs & fwhms & mse_z & mse_xy)[:, 0]
     reasons = [''] * len(snrs)
     for i in range(spots.shape[0]):
@@ -428,7 +413,7 @@ def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
 
 
 def write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args):
-
+    # Write training data (and optionally debug info about each bead)
     outpath = os.path.join(args['outpath'], 'combined')
     os.makedirs(outpath, exist_ok=True)
 
@@ -464,6 +449,7 @@ def write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args):
 
 
 def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname, z_step):
+    # Write debug plot for an individual bead
     stack = stacks[i]
     loc = locs.iloc[i].to_dict()
 
@@ -509,7 +495,6 @@ def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname, z_step
     outfpath = os.path.join(outpath, f'{fname}_bead_{i}.png')
     plt.savefig(outfpath)
     plt.close()
-    # print(f'Wrote {outfpath}')
 
 
 def write_stack_figures(stacks, locs, outpath, z_step):
@@ -521,17 +506,10 @@ def write_stack_figures(stacks, locs, outpath, z_step):
     with Pool(8) as pool:
         _ = pool.starmap(write_stack_figure, zip(idx, repeat(central_bead_idx), repeat(stacks), repeat(locs), repeat(outpath), repeat(fname), repeat(z_step)))
 
-# def filter_by_tmp_locs(locs, spots):
-#     original_locs = pd.read_hdf('/home/miguel/Projects/smlm_z/publication/original_locs.hdf', key='locs')
-#     x_coords = set(original_locs['x'])
-#     idx = np.argwhere([x in x_coords for x in locs['x']]).squeeze()
-#     locs = locs.iloc[idx]
-#     spots = spots[idx]
-#     print(locs.shape)
-#     return locs, spots
 
 
 def get_pixel_size(tags):
+    # Read metadata from tiff ImageJ tags
     num_pixels, units = tags['XResolution'].value
     _num_pixels, _units = tags['YResolution'].value
     val = units / num_pixels
@@ -549,6 +527,7 @@ def get_pixel_size(tags):
 
 
 def main(args):
+    # Extracts beads from each image stack and compiles them into output files
     all_stacks = []
     all_spots = []
     all_locs = []
@@ -568,8 +547,6 @@ def main(args):
     xsize = None
     ysize = None
     for bead_stack_path in tqdm(natsorted(args['bead_stacks'])):
-        # if 'stack_3_' not in bead_stack_path:
-        #     continue
         tqdm.write(f'Preparing {os.path.basename(bead_stack_path)}')
         img_handle = TiffFile(bead_stack_path)
         metadata = img_handle.imagej_metadata
@@ -580,7 +557,7 @@ def main(args):
         if 'spacing' in metadata:
             direction = metadata['spacing'] > 0
             if not direction:
-                # Handle stacks imaged in opposite axial direction
+                # Handle image sacks where piezo stage moved in opposite direction
                 bead_stack = bead_stack[::-1]
                 metadata['spacing'] *= -1
 
@@ -640,13 +617,6 @@ def main(args):
 
     stacks, locs = realign_beads(stacks, locs, z_step)
 
-    # original_locs = pd.read_hdf('/home/miguel/Projects/smlm_z/publication/original_locs.hdf', key='locs')
-    # x_coords = set(original_locs['x'])
-    # print(len(set(locs['x'])), len(set(original_locs['x'])))
-    # print(len(set(locs['x']).intersection(set(original_locs['x']))))
-    # locs = pd.concat((locs, locs))
-    # stacks = np.concatenate((stacks, stacks))
-
     print(f'Kept {locs.shape[0]} total beads')
 
     write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args)
@@ -656,8 +626,19 @@ def main(args):
         write_stack_figures(stacks.mean(axis=-1), locs, outpath, z_step)
 
 
+def check_path(args):
+    dirpath = args['bead_stacks']
+    if os.path.exists(dirpath):
+        print('Bead directory exists')
+        return args
+    elif '/' in dirpath:
+        raise ValueError(f'{dirpath} not found, check Windows vs UNIX pathing')
+    else:
+        raise ValueError(f'{dirpath} not found')
+
+
 def parse_args():
-    parser = ArgumentParser(description='')
+    parser = ArgumentParser(description='Tool to extract, filter, pre-process and compile bead data')
     parser.add_argument('bead_stacks', help='Path to TIFF bead stacks / directory containing bead stacks.')
     parser.add_argument('-z', '--z_step', help='Overwrite metadata z step size (nm)', type=int)
     parser.add_argument('--zrange', help='Maximum z-range (+- value) over which to extract bead data (nm)', type=int, default=1000)
@@ -678,24 +659,12 @@ def parse_args():
     return args
 
 
-def check_path(args):
-    dirpath = args['bead_stacks']
-    if os.path.exists(dirpath):
-        print('Bead directory exists')
-        return args
-    elif '/' in dirpath:
-        raise ValueError(f'{dirpath} not found, check Windows vs UNIX pathing')
-    else:
-        raise ValueError(f'{dirpath} not found')
-
-
 def run_tool():
     args = parse_args()
     args = check_path(args)
     print(args)
     test_picasso_exec()
     args = transform_args(args)
-    validate_args(args)
     main(args)
 
 
