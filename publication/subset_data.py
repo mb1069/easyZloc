@@ -41,5 +41,5 @@ print(f'Retaining {len(idx)} PSFs')
 df = df.iloc[idx]
 stacks = stacks[idx]
 
-df.to_hdf(outdir+'locs.hdf', key='locs')
-imwrite(outdir+'stacks.ome.tif', stacks)
+df.to_hdf(outdir + 'locs.hdf', key='locs')
+imwrite(outdir + 'stacks.ome.tif', stacks)

@@ -1,5 +1,23 @@
 
-import sys, os
+import gc
+import joblib
+from sklearn.metrics import mean_absolute_error
+import scipy.optimize as opt
+from sklearn.preprocessing import KBinsDiscretizer, MinMaxScaler
+from sklearn.model_selection import train_test_split
+from wandb.integration.keras import WandbMetricsLogger
+import wandb
+from tqdm import tqdm
+import pandas as pd
+from tifffile import imread
+from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset, ScaledMeanAbsoluteError
+import matplotlib.pyplot as plt
+import matplotlib
+import numpy as np
+import seaborn as sns
+import argparse
+import sys
+import os
 import json
 import shutil
 import tensorflow as tf
@@ -9,39 +27,18 @@ from tensorflow.keras import optimizers
 from keras.callbacks import ReduceLROnPlateau, EarlyStopping, Callback
 from tensorflow.keras.layers import Input, Dense, Flatten, Dropout
 from tensorflow.keras.models import Model
-from tensorflow.keras import Sequential, layers
 # from tensorflow.keras import mixed_precision
 # mixed_precision.set_global_policy('mixed_float16')
 
 from vit_keras import vit
-from keras import backend as K
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 VERSION = '0.16'
 CHANGE_NOTES = 'Fixing validation system'
 
-import argparse
-import seaborn as sns
-import numpy as np
-import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from util.util import grid_psfs, load_dataset, save_dataset, load_model, preprocess_img_dataset, ScaledMeanAbsoluteError
-from tifffile import imread
-import pandas as pd
-from tqdm import tqdm
-import wandb
-from wandb.integration.keras import WandbMetricsLogger
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, KBinsDiscretizer, MinMaxScaler
-
-import scipy.optimize as opt
-from sklearn.metrics import mean_absolute_error
-
-import joblib
-import gc
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
@@ -63,7 +60,6 @@ def load_data(args):
     psfs = imread(args['stacks'])[:, :, :, :, np.newaxis].astype(np.float32)
     locs = pd.read_hdf(args['locs'], key='locs')
     locs['idx'] = np.arange(locs.shape[0])
-
 
     # TODO undo
     if args['debug']:
@@ -88,7 +84,7 @@ def stratify_data(locs, args):
         x, y = xy
         rho = np.sqrt(x**2 + y**2)
         phi = np.arctan2(y, x)
-        return(rho, phi)
+        return (rho, phi)
 
     center = locs[['x', 'y']].mean().to_numpy()
     coords = locs[['x', 'y']].to_numpy() - center
@@ -127,7 +123,6 @@ def split_train_val_test(psfs, locs, ys, args):
     # removed stratification
     train_idx, test_idx = train_test_split(idx, train_size=0.9, random_state=args['seed'])
 
-
     train_idx, val_idx = train_test_split(train_idx, train_size=0.9, random_state=args['seed'])
 
     xy_coords = locs[['x', 'y']].to_numpy()
@@ -158,8 +153,7 @@ def filter_zranges(train_data, val_data, test_data, args):
         psfs, groups = X
         valid_ids = np.argwhere(abs(zs.squeeze()) < args['zrange']).squeeze()
         return [psfs[valid_ids], groups[valid_ids]], zs[valid_ids]
-    
-    
+
     X_train, y_train = filter_zrange((train_psfs, train_coords), train_ys)
     X_val, y_val = filter_zrange((val_psfs, val_coords), val_ys)
     X_test, y_test = filter_zrange((test_psfs, test_coords), test_ys)
@@ -167,9 +161,8 @@ def filter_zranges(train_data, val_data, test_data, args):
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 
-
 def norm_xy_coords(X_train, X_val, X_test, args):
-    scaler = MinMaxScaler(feature_range=(0,1))
+    scaler = MinMaxScaler(feature_range=(0, 1))
     full_fov_data = [[0, 0], [args['xsize'], args['ysize']]]
     scaler.fit(full_fov_data)
     X_train[1] = scaler.transform(X_train[1])
@@ -180,12 +173,13 @@ def norm_xy_coords(X_train, X_val, X_test, args):
         try:
             assert dataset.min() >= 0
             assert dataset.max() <= 1
-        except AssertionError as e:
+        except AssertionError:
             raise AssertionError('XY coordinates out of range, check training data')
     outpath = os.path.join(args['outdir'], 'scaler.save')
-    joblib.dump(scaler, outpath) 
+    joblib.dump(scaler, outpath)
 
     return X_train, X_val, X_test
+
 
 def norm_z_coords(y_train, y_val, y_test, args):
     rescale = args['zrange']
@@ -213,12 +207,11 @@ def get_dataset(X, y):
 def prep_dataset(ds, args, shuffle=False):
     ds = ds.cache()
     if shuffle:
-        ds = ds.shuffle(buffer_size=int(args['batch_size']*1.5), seed=args['seed'])
+        ds = ds.shuffle(buffer_size=int(args['batch_size'] * 1.5), seed=args['seed'])
     ds = ds.batch(args['batch_size'])
     ds = ds.with_options(options)
     ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
-
 
 
 class RandomPoissonNoise(layers.Layer):
@@ -232,7 +225,7 @@ class RandomPoissonNoise(layers.Layer):
         self.rescale = rescale
 
     def call(self, input, training=False):
-        if training==False:
+        if not training:
             return input
         lam = tf.random.uniform((1,), self.lam_min, self.lam_max)[0]
         noise = tf.random.poisson(self.shape, lam, dtype=tf.float32) / self.rescale
@@ -252,7 +245,7 @@ class RandomGaussianNoise(keras.layers.Layer):
             stds = tf.random.uniform(shape=(1,), minval=self.std_range[0], maxval=self.std_range[1])[0]
             noise = tf.random.normal(shape=tf.shape(inputs), mean=means, stddev=stds)
             output = noise + inputs
-            maxs = tf.math.reduce_max(output, axis=(1,2,3), keepdims=True)
+            maxs = tf.math.reduce_max(output, axis=(1, 2, 3), keepdims=True)
             return tf.nn.relu(output / maxs)
         else:
             return inputs
@@ -282,9 +275,9 @@ def get_model(args):
 
         if args['aug_brightness']:
             extra_aug.add(layers.RandomBrightness(args['aug_brightness'], value_range=[0, 1], seed=args['seed']))
-            
+
         img_aug_out = extra_aug(img_rgb)
-    
+
     # Rescale from [0, 1] to [-1, 1] for better learning efficiency with imagenet weights
     img_aug_out = layers.Rescaling(scale=2, offset=-1)(img_aug_out)
 
@@ -292,26 +285,26 @@ def get_model(args):
     x_coords = layers.Dense(64)(coords_input)
 
     x_coords = layers.Dense(64)(x_coords)
-   
+
     model_version = AVAILABLE_MODELS[args['architecture']]
 
     if 'vit_' in args['architecture']:
-        feat_model = model_version(image_size=args['image_size'], 
-                                activation='sigmoid',
-                                pretrained=True,
-                                include_top=False,
-                                pretrained_top=False)
+        feat_model = model_version(image_size=args['image_size'],
+                                   activation='sigmoid',
+                                   pretrained=True,
+                                   include_top=False,
+                                   pretrained_top=False)
     elif 'resnet' in args['architecture']:
         rgb_shape = (args['image_size'], args['image_size'], 3)
         feat_model = model_version(input_shape=rgb_shape,
-                                  weights='imagenet',
-                                  include_top=False)
+                                   weights='imagenet',
+                                   include_top=False)
     else:
         rgb_shape = (args['image_size'], args['image_size'], 3)
         feat_model = model_version(input_shape=rgb_shape,
-                                  weights='imagenet',
-                                  include_top=False,
-                                  include_preprocessing=False)
+                                   weights='imagenet',
+                                   include_top=False,
+                                   include_preprocessing=False)
 
     x = feat_model(img_aug_out)
     # Add additional layers for regression prediction
@@ -342,7 +335,7 @@ def bestfit_error(z_true, z_pred):
     x = np.linspace(z_true.min(), z_true.max(), len(y))
     y_fit = linfit(x, popt[0])
     error = mean_absolute_error(y_fit, y)
-    return error, popt[0], y_fit, abs(y_fit-y)
+    return error, popt[0], y_fit, abs(y_fit - y)
 
 
 class ValidationCallback(Callback):
@@ -360,7 +353,7 @@ class ValidationCallback(Callback):
 
         self.images = np.concatenate(images)
         self.coords = np.concatenate(coords)
-        self.z = np.concatenate(z)  * self.z_mult
+        self.z = np.concatenate(z) * self.z_mult
 
         self.coords2 = np.array(['_'.join(x.astype(str)) for x in self.coords.astype(str)])
         self.coords_groups = {c: np.argwhere(self.coords2 == c).squeeze() for c in set(self.coords2)}
@@ -375,9 +368,9 @@ class ValidationCallback(Callback):
 
             error = bestfit_error(z_vals, pred_vals)[3]
             errors.append(error)
-        
+
         mean_error = np.concatenate(errors).flatten().mean()
-        print(f'\Val error: {round(np.mean(mean_error), 2)}')
+        print(f'Val error: {round(np.mean(mean_error), 2)}')
         logs['val_mean_absolute_error'] = mean_error
         logs['val_loss'] = mean_error
 
@@ -401,6 +394,7 @@ def gen_example_aug_imgs(aug_model, train_data, args):
     del aug_model
     gc.collect()
 
+
 def train_model(train_data, val_data, args):
     epochs = 3 if args['debug'] else 1000
     lr = args['learning_rate']
@@ -411,11 +405,10 @@ def train_model(train_data, val_data, args):
 
     # scaled_mae_metric = partial(_scaled_mae_metric, scale_nm=args['zrange'])
 
-    
     with strategy.scope():
 
         # Model refining
-        # 
+        #
         if args['pretrained_model']:
             model = keras.models.load_model(args['pretrained_model'])
         else:
@@ -432,9 +425,9 @@ def train_model(train_data, val_data, args):
         # ValidationCallback(val_data, args['zrange']),
         WandbMetricsLogger(),
         ReduceLROnPlateau(monitor='val_mean_absolute_error', factor=0.1,
-                        patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8, cooldown=5),
+                          patience=5, verbose=True, mode='min', min_delta=1, min_lr=1e-8, cooldown=5),
         EarlyStopping(monitor='val_mean_absolute_error', patience=20,
-                    verbose=True, min_delta=1, restore_best_weights=True),
+                      verbose=True, min_delta=1, restore_best_weights=True),
         # tb_callback,
     ]
 
@@ -478,17 +471,17 @@ def write_report(model, locs, train_data, val_data, test_data, args):
     }
 
     os.makedirs(os.path.join(args['outdir'], 'results'), exist_ok=True)
-    
+
     sns.scatterplot(data=locs, x='x', y='y', hue='ds')
     plt.savefig(os.path.join(args['outdir'], 'results', 'data_split') + '.png')
     plt.close()
     print('Wrote scatterplot')
 
     for dirname, ds in [
-        # ('train', train_data), 
-        ('val', val_data), 
+        # ('train', train_data),
+        ('val', val_data),
         ('test', test_data)
-        ]:
+    ]:
         print(f'Writing results for {dirname} dataset')
         os.makedirs(os.path.join(args['outdir'], 'results', dirname), exist_ok=True)
         images = []
@@ -516,14 +509,12 @@ def write_report(model, locs, train_data, val_data, test_data, args):
         ax3 = fig.add_subplot(gs[1, 0])
         ax4 = fig.add_subplot(gs[1, 1])
 
-
         plt.title(fname)
         ax1.scatter(z, preds)
         ax1.set_xlabel('True Z position (nm)')
         ax1.set_ylabel('Predicted Z pos (nm)')
         ds_df = pd.DataFrame.from_dict({'x': coords[:, 0], 'y': coords[:, 1], 'error': errors})
         ds_df = ds_df.groupby(['x', 'y']).mean().reset_index()
-
 
         sns.scatterplot(data=ds_df, x='x', y='y', hue='error', ax=ax2)
         sns.scatterplot(data=ds_df, x='x', y='error', ax=ax3)
@@ -535,28 +526,26 @@ def write_report(model, locs, train_data, val_data, test_data, args):
         wandb.log({img_fname: wandb.Image(outpath)})
         print('Writing plots...')
 
-
         coords2 = ['_'.join(x.astype(str)) for x in coords]
         ds_true_vals = []
         ds_pred_vals = []
         for num, c in tqdm(enumerate(sorted(set(coords2))), total=len(set(coords2))):
-            idx = [i for i, val in enumerate(coords2) if val==c]
+            idx = [i for i, val in enumerate(coords2) if val == c]
             idx = sorted(idx, key=lambda i: z.squeeze()[i])
             z_vals = z.squeeze()[idx]
             ds_true_vals.extend(z_vals)
             pred_vals = preds[idx]
             group_images = images[idx]
-            error = abs(z_vals-pred_vals)
+            error = abs(z_vals - pred_vals)
 
             mae = str(round(error.mean(), 2))
-            
+
             fig = plt.figure(layout="constrained", figsize=(12, 10), dpi=80)
             gs = plt.GridSpec(4, 2, figure=fig)
             ax1 = fig.add_subplot(gs[:, 0])
             ax2 = fig.add_subplot(gs[0, 1])
             ax3 = fig.add_subplot(gs[1, 1])
             ax4 = fig.add_subplot(gs[2:4, 1])
-
 
             fig.suptitle(f'Bead: {num}')
             ax1.scatter(z_vals, pred_vals)
@@ -565,7 +554,6 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax1.set_ylabel('Predicted z (nm)')
             ax1.set_title(f'MAE: {mae}nm')
 
-            
             ax2.imshow(grid_psfs(group_images.mean(axis=-1)).T)
             ax2.set_title('Ordered by frame')
             ax2.set_axis_off()
@@ -575,7 +563,6 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax3.set_xlabel(f'min error: {str(round(min(error), 2))}, max error: {str(round(max(error), 2))}')
             ax3.set_axis_off()
 
-            
             ax4.scatter(coords[:, 0], coords[:, 1])
             gcoords = list(map(lambda x: [float(x)], c.split('_')))
             ax4.scatter(gcoords[0], gcoords[1])
@@ -584,7 +571,6 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax4.set_title('Position of bead within dataset')
             ax4.axis('equal')
 
-    
             # wandb.log({img_fname: wandb.Image(outpath)})
 
             if dirname != 'train':
@@ -600,25 +586,23 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             img_fname = f'{dirname}_bead' + f'_{num}.png'
             outpath = os.path.join(args['outdir'], 'results', dirname, img_fname)
             plt.savefig(outpath)
-            
+
             plt.close()
-            
+
             ds_pred_vals.extend(pred_vals)
-            tbl_data.append((dirname, num,  gcoords[0][0], gcoords[1][0], mae, min(error), max(error),offset))
+            tbl_data.append((dirname, num, gcoords[0][0], gcoords[1][0], mae, min(error), max(error), offset))
 
             if num == 10 and dirname == 'train':
                 break
-        
+
         ds_mae = mean_absolute_error(ds_true_vals, ds_pred_vals)
-        report_data[dirname+'_mae'] = float(ds_mae)
-        print(dirname, report_data[dirname+'_mae'])
+        report_data[dirname + '_mae'] = float(ds_mae)
+        print(dirname, report_data[dirname + '_mae'])
 
-        wandb.run.summary[dirname+'_mae'] = float(ds_mae)
-
+        wandb.run.summary[dirname + '_mae'] = float(ds_mae)
 
     df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'min_error', 'max_error', 'offset'])
     df.to_csv(os.path.join(args['outdir'], 'results', 'results.csv'))
-
 
     with open(os.path.join(args['outdir'], 'results', 'report.json'), 'w') as fp:
         json_dumps_str = json.dumps(report_data, indent=4)
@@ -636,10 +620,10 @@ def add_shot_noise(image, min_poisson_lam):
 
     # Convert image to photon counts
     photon_count = image * factor
-    
+
     # Apply Poisson noise
     noisy_image = np.random.poisson(photon_count.astype(int))
-    
+
     # Convert back to image scale
     return noisy_image / factor
 
@@ -693,8 +677,8 @@ def prepare_data(args):
     print('Test pixel vals', X_test[0].min(), X_test[0].max())
 
     print('Train XY vals', X_train[1].min(), X_train[1].max())
-    print('Val XY vals',X_val[1].min(), X_val[1].max())
-    print('Test XY vals',X_test[1].min(), X_test[1].max())
+    print('Val XY vals', X_val[1].min(), X_val[1].max())
+    print('Test XY vals', X_test[1].min(), X_test[1].max())
 
     print('Train Z vals', y_train.min(), y_train.max())
     print('Val Z vals', y_val.min(), y_val.max())
@@ -721,7 +705,6 @@ def prepare_data(args):
     # save_dataset(train_data, 'train', args)
 
     return train_data, val_data, test_data, locs
-
 
 
 def load_ext_test_dataset(args):
@@ -768,6 +751,7 @@ def save_model_plot(model, outdir):
     outpath = os.path.join(outdir, 'architecture.png')
     keras.utils.plot_model(model, show_shapes=True, show_layer_activations=True, to_file=outpath)
 
+
 def main(args):
     if not args['regen_report']:
         train_data, val_data, test_data, locs = prepare_data(args)
@@ -783,7 +767,7 @@ def main(args):
         split_train_val_test(stacks, locs, zs, args)
 
     if args['ext_test_dataset']:
-        wandb.log({'ext_test_mae':  get_test_error(model, test_data)})
+        wandb.log({'ext_test_mae': get_test_error(model, test_data)})
 
     write_report(model, locs, train_data, val_data, test_data, args)
 
@@ -795,7 +779,7 @@ def parse_args():
     parser.add_argument('--project', default='smlm_z')
 
     parser.add_argument('-s', '--stacks', help='TIF file containing stacks in format N*Z*Y*X', default='./stacks.ome.tif')
-    parser.add_argument('-l' ,'--locs', help='HDF5 locs file', default='./locs.hdf')
+    parser.add_argument('-l', '--locs', help='HDF5 locs file', default='./locs.hdf')
     parser.add_argument('-sc', '--stacks_config', help='JSON config file for stacks file (can be automatically found if in same dir)', default='./stacks_config.json')
     # parser.add_argument('-zstep', '--zstep', help='Z step in stacks (in nm)', default=10, type=int)
     parser.add_argument('--zrange', help='Z to model (+-val) in nm', default=1000, type=int)
@@ -827,17 +811,17 @@ def parse_args():
     args = vars(parser.parse_args())
 
     if not os.path.exists(args['stacks_config']):
-        print(f'Could not find stacks-config file, checking in dir of stacks...')
+        print('Could not find stacks-config file, checking in dir of stacks...')
         args['stacks-config'] = os.path.join(os.path.dirname(args['stacks']), 'stacks_config.json')
         if not os.path.exists(args['stacks_config']):
-            print(f'Could not find stacks-config file')
+            print('Could not find stacks-config file')
             quit(1)
 
     with open(args['stacks_config']) as f:
         d = json.load(f)
 
     args.update(d)
-    
+
     for k, v in args.items():
         print(f'{k}: {v}')
 
@@ -851,7 +835,7 @@ def init_wandb(args):
     code_dir = os.path.dirname(os.path.normpath(__file__))
     wandb.init(
         project=args['project'],
-        config = {
+        config={
             'system': args['system'],
             'dataset': os.path.basename(os.path.normpath(args['dataset'])),
             'learning_rate': args['learning_rate'],
@@ -866,16 +850,17 @@ def init_wandb(args):
         settings=wandb.Settings(code_dir=code_dir)
     )
 
+
 def run_tool():
     args = parse_args()
-    
+
     i = 1
     base_outdir = args['outdir']
     while os.path.exists(args['outdir']):
         args['outdir'] = f'{base_outdir}_{i}'
         # shutil.rmtree(args['outdir'])
         i += 1
-    print(f'Saving data to {outdir}')
+    print(f"Saving data to {args['outdir']}")
     os.makedirs(args['outdir'], exist_ok=True)
 
     # tf.keras.utils.set_random_seed(args['seed'])  # sets seeds for base-python, numpy and tf
@@ -885,6 +870,6 @@ def run_tool():
     main(args)
     wandb.finish()
 
+
 if __name__ == '__main__':
     run_tool()
-    
