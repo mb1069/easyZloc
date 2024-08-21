@@ -93,7 +93,7 @@ def get_or_create_locs(slice_path, pixel_size, args):
             return
         tqdm.write('finished!')
 
-    if not os.path.exists(spots_path) or True:
+    if not os.path.exists(spots_path):
         main_gen_spots({'locs': locs_path, 'img': slice_path})
 
     with h5py.File(spots_path) as f:
@@ -484,6 +484,7 @@ def write_stack_figure(i, central_bead_idx, stacks, locs, outpath, fname, z_step
     ax2.set_title('Max normalised pixel intensity over z')
     ax2.set_xlabel('z (nm)')
     ax2.set_ylabel('pixel intensity')
+    ax2.legend()
 
     for k, v in loc.items():
         if isinstance(v, float):
