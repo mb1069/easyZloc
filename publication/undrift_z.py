@@ -9,12 +9,14 @@ import matplotlib.pyplot as plt
 import h5py
 import shutil
 
+
 def plot_drift(df, outpath):
     group_df = df.groupby('frame').mean()
     fig = sns.scatterplot(data=group_df, x='frame', y='z [nm]', alpha=0.05, label='z locs (nm)').get_figure()
     fig.savefig(outpath)
     plt.close()
     print('Plotted drift')
+
 
 def save_new_locs(df, args):
     print('Saving new locs')
@@ -32,19 +34,19 @@ def undrift(df, outpath, args):
     df = df.copy(deep=True)
 
     def frame_center(x):
-        return x.left + (args['rcc']/2)
-        
-    df['frame_bin'] = (pd.cut(df['frame'].astype(int), np.arange(0, df['frame'].max()+args['rcc'], args['rcc']), include_lowest=True))
+        return x.left + (args['n_frames'] / 2)
+
+    df['frame_bin'] = (pd.cut(df['frame'].astype(int), np.arange(0, df['frame'].max() + args['n_frames'], args['n_frames']), include_lowest=True))
     df_group_bin = df.groupby('frame_bin').mean().reset_index()
     df_group_bin['frame_bin_center'] = df_group_bin['frame_bin'].map(frame_center)
 
     x = df_group_bin['frame_bin_center']
     y = df_group_bin['z [nm]']
 
-    spline = BSpline(*splrep(x, y, s=len(y)*100))
+    spline = BSpline(*splrep(x, y, s=len(y) * 100))
     print('Fitted spline')
 
-    _x = np.arange(df['frame'].min(), df['frame'].max()+1)
+    _x = np.arange(df['frame'].min(), df['frame'].max() + 1)
     _y = spline(_x)
 
     fig, ax = plt.subplots()
@@ -79,7 +81,6 @@ def main(args):
     df = pd.read_hdf(args['locs'], key='locs')
     print(f'Loaded locs {df.shape}')
 
-    
     plot_drift(df, os.path.join(outpath, 'init_drift.png'))
 
     df_out = undrift(df, outpath, args)
@@ -89,14 +90,17 @@ def main(args):
     plot_hists(df, df_out, outpath)
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('locs')
-    parser.add_argument('--rcc', type=int, default=500, help='N frames per chunk to estimate drift')
+    parser.add_argument('--n-frames', type=int, default=500, help='N frames per chunk to estimate drift')
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+def run_tool():
     args = vars(parse_args())
     main(args)
+
+
+if __name__ == '__main__':
+    run_tool()

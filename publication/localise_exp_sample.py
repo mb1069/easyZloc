@@ -1,30 +1,31 @@
 
-import sys, os
+from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
+from picasso import io
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import matplotlib
+import seaborn as sns
+import numpy as np
+import h5py
+import pandas as pd
+import argparse
+import shutil
+import json
+import joblib
+import sys
+import os
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 
 # # TODO remove this
 if not os.environ.get('CUDA_VISIBLE_DEVICES'):
-    os.environ['CUDA_VISIBLE_DEVICES']='0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 # os.environ['CUDA_VISIBLE_DEVICES']=''
 
-import joblib
-import json
-import shutil
-import argparse
-import pandas as pd
-import h5py
-import numpy as np
-import seaborn as sns
+matplotlib.use('Agg')
 
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from picasso import io
-import yaml
-
-from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
@@ -45,14 +46,12 @@ XLIM, YLIM = None, None
 # XLIM, YLIM = None, None
 
 
-
 # NUP OPENFRAME
 # DEFAULT_LOCS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted.hdf5'
 # DEFAULT_SPOTS = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_spots.hdf5'
 # PICKED = '/home/miguel/Projects/data/20230601_MQ_celltype/nup/fov2/storm_1/storm_1_MMStack_Default.ome_locs_undrifted_picked_4.hdf5'
 # DEFAULT_PIXEL_SIZE = 86
 # XLIM, YLIM = None, None
-
 
 
 # Zeiss
@@ -124,7 +123,7 @@ XLIM, YLIM = None, None
 #         psfs[i] = psfs[i] / psf_sum
 
 #     psfs[psfs<0] = 0
-#     return psfs  
+#     return psfs
 
 
 # norm_funcs = {
@@ -185,7 +184,7 @@ def pred_z(model, spots, coords, args, zrange, im_size, img_norm):
     fake_z = np.zeros((coords.shape[0],))
     exp_z = tf.data.Dataset.from_tensor_slices(fake_z)
     exp_data = tf.data.Dataset.zip((exp_X, exp_z))
-    
+
     BATCH_SIZE = 2048
     exp_data = exp_data.batch(BATCH_SIZE)
     exp_data = preprocess_img_dataset(exp_data, im_size, img_norm)
@@ -200,8 +199,7 @@ def pred_z(model, spots, coords, args, zrange, im_size, img_norm):
 
 def write_locs(locs, z_coords, args):
     locs['z [nm]'] = z_coords
-    locs['z'] = locs['z [nm]']
-    # locs['z'] = z_coords / args['pixel_size']
+    locs['z'] = z_coords / args['pixel_size']
     locs['x [nm]'] = locs['x'] * args['pixel_size']
     locs['y [nm]'] = locs['y'] * args['pixel_size']
 
@@ -225,6 +223,12 @@ def write_locs(locs, z_coords, args):
         print(f'\t- {os.path.abspath(dest_yaml)}')
 
 
+def write_spots(spots, args):
+    spots_path = os.path.join(args['outdir'], 'spots.hdf5')
+    with h5py.File(spots_path, 'w') as f:
+        f.create_dataset(name='spots', data=spots)
+
+
 def write_report_data(args):
     report_data = {
         'code_version': VERSION
@@ -237,12 +241,13 @@ def write_report_data(args):
 
 def extract_fov(spots, locs):
     print('fov', locs.shape)
-    idx = np.argwhere((XLIM[0]<locs['x']) & (XLIM[1]>locs['x']) & (YLIM[0]<locs['y']) & (YLIM[1]>locs['y'])).squeeze()
+    idx = np.argwhere((XLIM[0] < locs['x']) & (XLIM[1] > locs['x']) & (YLIM[0] < locs['y']) & (YLIM[1] > locs['y'])).squeeze()
     spots = spots[idx]
     locs = locs.iloc[idx]
     return spots, locs
 
-def tmp_filter_locs(new_locs, spots, args):
+
+def pick_locs(new_locs, spots, args):
     picked_locs = pd.read_hdf(args['picked_locs'], key='locs')
 
     new_locs.reset_index(inplace=True, drop=False)
@@ -281,17 +286,17 @@ def main(args):
     with h5py.File(args['spots'], 'r') as f:
         spots = np.array(f['spots']).astype(np.uint16)
 
-    spots = (spots * args['gain'] / args['sensitivity']) + args['baseline']
+    # spots = (spots * args['gain'] / args['sensitivity']) + args['baseline']
 
     # TODO remove temp subset of locs
     if args['picked_locs']:
-        locs, spots = tmp_filter_locs(locs, spots, args)
+        locs, spots = pick_locs(locs, spots, args)
 
     print(locs.shape, spots.shape)
 
-    idx = np.argwhere(locs['net_gradient']>5000).squeeze()
-    locs = locs.iloc[idx]
-    spots = spots[idx]
+    # idx = np.argwhere(locs['net_gradient']>5000).squeeze()
+    # locs = locs.iloc[idx]
+    # spots = spots[idx]
 
     assert locs.shape[0] == spots.shape[0]
     if XLIM or YLIM:
@@ -302,17 +307,18 @@ def main(args):
     coords = apply_coords_norm(locs[['x', 'y']].to_numpy(), args)
 
     z_coords = pred_z(model, spots, coords, args, zrange, im_size, img_norm)
-
+    assert locs.shape[0] == spots.shape[0]
     write_locs(locs, z_coords, args)
+    write_spots(spots, args)
 
 
 def preprocess_args(args):
     if args['model_dir']:
-            print('Using model dir from parameter -mo/--model-dir')
-            dirname = os.path.abspath(args['model_dir'])
-            args['model'] = os.path.join(dirname, 'latest_vit_model3')
-            # args['datagen'] = os.path.join(dirname, 'datagen.gz')
-            args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
+        print('Using model dir from parameter -mo/--model-dir')
+        dirname = os.path.abspath(args['model_dir'])
+        args['model'] = os.path.join(dirname, 'model')
+        # args['datagen'] = os.path.join(dirname, 'datagen.gz')
+        args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
 
     args['locs'] = os.path.abspath(args['locs'])
     args['spots'] = os.path.abspath(args['spots'])
@@ -348,15 +354,17 @@ def parse_args():
 
     write_arg_log(args)
     save_copy_script(args['outdir'])
-    
+
     return args
 
 
-if __name__=='__main__':
-    import matplotlib
-    matplotlib.use('Agg')
+def run_tool():
     args = parse_args()
     main(args)
+
+
+if __name__ == '__main__':
+    run_tool()
 
 
 # # Johnny mitochondria data

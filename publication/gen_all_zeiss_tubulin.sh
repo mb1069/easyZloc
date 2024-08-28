@@ -17,9 +17,12 @@ OUTDIR='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_n
 # PX_SIZE=106;
 # ZSTEP=10;
 
-NUP_OUTDIR='out_tub'
-DEFAULT_LOCS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift.hdf5';
-DEFAULT_SPOTS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_spots.hdf5';
+NUP_OUTDIR='out_tub_alt'
+DEFAULT_LOCS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_alt_undrift.hdf5'
+DEFAULT_SPOTS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_spots_alt.hdf5'
+PICKED='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak/out_tub_alt/locs_3d_undrift_z_picked.hdf5'
+# DEFAULT_LOCS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift.hdf5';
+# DEFAULT_SPOTS='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_spots.hdf5';
 # PICKED='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift_picked.hdf5';
 # PICKED='/media/Backup/smlm_z_data/20240315_tubulin/Well1/ROI1/storm_1/storm_1_MMStack_Default.ome_locs_undrift_picked_rect.hdf5';
 # PICKED_UNDRIFTED_FILE='/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak/out_tub/locs_3d_undrift_z_rect.hdf5';
@@ -59,11 +62,12 @@ conda activate smlm_z;
 
 
 # echo $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5
-# python3 /home/miguel/Projects/smlm_z/publication/undrift_z.py $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5 --rcc 500;
+# python3 /home/miguel/Projects/smlm_z/publication/undrift_z.py $OUTDIR/$NUP_OUTDIR/locs_3d.hdf5 --n-frames 500;
 
 cd $OUTDIR/$NUP_OUTDIR && echo $PWD && wandb offline &&
 # python3 /home/miguel/Projects/smlm_z/publication/render_tub.py -l $OUTDIR/$NUP_OUTDIR/locs_3d_undrift_z.hdf5 -p $PICKED --kde-factor $KDE_FACTOR --max-frame 13000;
-python3 /home/miguel/Projects/smlm_z/publication/render_tub.py -l $OUTDIR/$NUP_OUTDIR/locs_3d_undrift_z_picked.hdf5 --kde-factor $KDE_FACTOR;
+# python3 /home/miguel/Projects/smlm_z/publication/render_tub.py -l $OUTDIR/$NUP_OUTDIR/locs_3d_undrift_z_picked.hdf5 --kde-factor $KDE_FACTOR;
+python3 /home/miguel/Projects/smlm_z/publication/render_tub.py -l $PICKED --kde-factor $KDE_FACTOR --max-frame 13000;
 
 
 

@@ -1,32 +1,35 @@
 
-import sys, os
+from sklearn.metrics import mean_absolute_error
+from scipy import optimize as opt
+from tifffile import imread
+import wandb
+from util.util import grid_psfs
+from picasso import io
+import tensorflow as tf
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Resizing, Lambda
+import matplotlib.pyplot as plt
+import matplotlib
+import seaborn as sns
+import numpy as np
+import h5py
+import pandas as pd
+import argparse
+import shutil
+import json
+import joblib
+import sys
+import os
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
 
 
 # # TODO remove this
 if not os.environ.get('CUDA_VISIBLE_DEVICES'):
-    os.environ['CUDA_VISIBLE_DEVICES']='0'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-import joblib
-import json
-import shutil
-import argparse
-import pandas as pd
-import h5py
-import numpy as np
-import seaborn as sns
-import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Resizing, Lambda
-from tensorflow.keras import Sequential
-import tensorflow as tf
-from picasso import io
 
-from util.util import grid_psfs
-import wandb
-from tifffile import imread
 
 N_GPUS = max(1, len(tf.config.experimental.list_physical_devices("GPU")))
 
@@ -47,7 +50,7 @@ def norm_psf_stack(psfs):
         psf_max = psfs[i].max()
         psfs[i] = psfs[i] / psf_max
 
-    psfs[psfs<0] = 0
+    psfs[psfs < 0] = 0
     return psfs
 
 
@@ -58,8 +61,9 @@ def norm_psf_frame(psfs):
         psf_max = psfs[i].max(keepdims=True)
         psfs[i] = psfs[i] / psf_max
 
-    psfs[psfs<0] = 0
+    psfs[psfs < 0] = 0
     return psfs
+
 
 def norm_frame_sum(psfs):
     for i in range(psfs.shape[0]):
@@ -68,14 +72,15 @@ def norm_frame_sum(psfs):
         psf_sum = psfs[i].sum()
         psfs[i] = psfs[i] / psf_sum
 
-    psfs[psfs<0] = 0
-    return psfs  
+    psfs[psfs < 0] = 0
+    return psfs
+
 
 norm_funcs = {
-        'frame': norm_psf_frame,
-        'stack': norm_psf_frame,
-        'image': norm_whole_image,
-        'sum': norm_frame_sum
+    'frame': norm_psf_frame,
+    'stack': norm_psf_frame,
+    'image': norm_whole_image,
+    'sum': norm_frame_sum
 }
 
 
@@ -121,7 +126,8 @@ def pred_z(model, spots, coords):
         return tuple(x), y
 
     BATCH_SIZE = 2048
-    exp_data = exp_data.map(apply_rescaling, num_parallel_calls=tf.data.AUTOTUNE).batch(BATCH_SIZE)
+    exp_data = exp_data.map(
+        apply_rescaling, num_parallel_calls=tf.data.AUTOTUNE).batch(BATCH_SIZE)
 
     pred_z = model.predict(exp_data, batch_size=BATCH_SIZE, workers=4)
 
@@ -130,13 +136,15 @@ def pred_z(model, spots, coords):
 
 def _find_matching_runs(hyper_params):
     runs = wandb.Api().runs('smlm_z2')
-    print(f"Matching run with... {hyper_params['norm']},{hyper_params['dataset']}, {hyper_params['gauss']}, {hyper_params['aug_ratio']}, {hyper_params['learning_rate']}, {hyper_params['batch_size']}")
+    print(
+        f"Matching run with... {hyper_params['norm']},{hyper_params['dataset']}, {hyper_params['gauss']}, {hyper_params['aug_ratio']}, {hyper_params['learning_rate']}, {hyper_params['batch_size']}")
     try:
         while True:
             run = runs.next()
 
             rc = run.config
-            print(f"Finding run with... {rc.get('dataset')}, {rc.get('aug_gauss')}, {rc.get('aug_ratio')}, {rc.get('learning_rate')}, {rc.get('batch_size')}")
+            print(
+                f"Finding run with... {rc.get('dataset')}, {rc.get('aug_gauss')}, {rc.get('aug_ratio')}, {rc.get('learning_rate')}, {rc.get('batch_size')}")
 
             try:
                 config_match = [
@@ -144,8 +152,10 @@ def _find_matching_runs(hyper_params):
                     str(rc['dataset']) == str(hyper_params['dataset']),
                     float(rc['aug_gauss']) == float(hyper_params['gauss']),
                     float(rc['aug_ratio']) == float(hyper_params['aug_ratio']),
-                    float(rc['learning_rate']) == float(hyper_params['learning_rate']),
-                    float(rc['batch_size']) == float(hyper_params['batch_size']),
+                    float(rc['learning_rate']) == float(
+                        hyper_params['learning_rate']),
+                    float(rc['batch_size']) == float(
+                        hyper_params['batch_size']),
 
                 ]
             except KeyError:
@@ -162,13 +172,12 @@ def find_matching_run(args):
 
     with open(report_path) as f:
         report_data = json.load(f)
-    hyper_params = {k: v for k, v in report_data['args'].items() if k in ['norm', 'dataset', 'gauss', 'aug_ratio', 'batch_size', 'learning_rate', 'brightness']}
-    
+    hyper_params = {k: v for k, v in report_data['args'].items() if k in [
+        'norm', 'dataset', 'gauss', 'aug_ratio', 'batch_size', 'learning_rate', 'brightness']}
+
     run_id = _find_matching_runs(hyper_params)
     wandb.init(project='smlm_z2', id=run_id, resume=True)
 
-
-from scipy import optimize as opt
 
 def bestfit_error(z_true, z_pred):
     def linfit(x, c):
@@ -181,15 +190,14 @@ def bestfit_error(z_true, z_pred):
     x = np.linspace(z_true.min(), z_true.max(), len(y))
     y_fit = linfit(x, popt[0])
     error = mean_absolute_error(y_fit, y)
-    return error, popt[0], y_fit, abs(y_fit-y)
+    return error, popt[0], y_fit, abs(y_fit - y)
 
-
-
-from sklearn.metrics import mean_absolute_error
 
 def eval_dataset_without_const_bias(coords, zs, z_pred, dname):
-    coords_str = np.array(['_'.join(x.astype(str)) for x in coords.astype(str)])
-    coords_groups = {c: np.argwhere(coords_str == c).squeeze() for c in set(coords_str)}
+    coords_str = np.array(['_'.join(x.astype(str))
+                          for x in coords.astype(str)])
+    coords_groups = {c: np.argwhere(coords_str == c).squeeze()
+                     for c in set(coords_str)}
 
     errors = []
 
@@ -201,12 +209,11 @@ def eval_dataset_without_const_bias(coords, zs, z_pred, dname):
         error = bestfit_error(z_vals, z_preds)[3]
         errors.append(error)
         plt.scatter(z_vals, z_preds)
-    
+
     mae = np.mean(errors)
     plt.savefig('./tmp.png')
     plt.close()
-    wandb.log({f'{dname}_p3' : wandb.Image('./tmp.png'), f'{dname}_error': mae})
-
+    wandb.log({f'{dname}_p3': wandb.Image('./tmp.png'), f'{dname}_error': mae})
 
 
 def main(args):
@@ -217,10 +224,10 @@ def main(args):
 
     with mirrored_strategy.scope():
         model = tf.keras.models.load_model(args['model'])
-    
 
     for locs, psfs in args['datasets']:
-        dname = os.path.basename(os.path.abspath(os.path.join(os.path.dirname(locs), os.pardir)))
+        dname = os.path.basename(os.path.abspath(
+            os.path.join(os.path.dirname(locs), os.pardir)))
         locs = pd.read_hdf(locs, key='locs')
         psfs = imread(psfs)
         zs = []
@@ -232,7 +239,8 @@ def main(args):
             zs.append(z)
 
         for xy in locs[['x', 'y']].to_numpy():
-            xy_coords.append(np.repeat(xy[np.newaxis, :], repeats=psfs.shape[1], axis=0))
+            xy_coords.append(
+                np.repeat(xy[np.newaxis, :], repeats=psfs.shape[1], axis=0))
 
         xy_coords = np.array(xy_coords)
         zs = np.array(zs)
@@ -241,21 +249,16 @@ def main(args):
         spots = np.concatenate(psfs)[:, :, :, np.newaxis]
         coords = np.concatenate(xy_coords)
 
-        idx = np.argwhere(abs(zs)<1000).squeeze()
+        idx = np.argwhere(abs(zs) < 1000).squeeze()
         coords = coords[idx]
         spots = spots[idx]
         zs = zs[idx]
 
         coords, spots = apply_normalisation(coords, spots, args)
 
-
         z_pred = pred_z(model, spots, coords).squeeze()
 
         eval_dataset_without_const_bias(coords, zs, z_pred, dname)
-        
-
-
-
 
     # locs, info = io.load_locs(args['locs'])
     # locs = pd.DataFrame.from_records(locs)
@@ -283,12 +286,14 @@ def main(args):
     # write_locs(locs, z_coords, args)
 
 
-
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-mo', '--model-dir', help='Path to output dir from train_model')
-    parser.add_argument('-m', '--model', help='Path to trained 3d localisation model')
-    parser.add_argument('-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
+    parser.add_argument('-mo', '--model-dir',
+                        help='Path to output dir from train_model')
+    parser.add_argument(
+        '-m', '--model', help='Path to trained 3d localisation model')
+    parser.add_argument(
+        '-d', '--datagen', help='Path to fitted image standardisation tool (datagen.gz)')
     parser.add_argument('-c', '--coords-scaler', help='2D coordinate rescaler')
     parser.add_argument('--datasets', required=True, nargs='+')
     parser.add_argument('--norm')
@@ -299,19 +304,20 @@ def parse_args():
     if args['model_dir']:
         print('Using model dir from parameter -mo/--model-dir')
         dirname = os.path.abspath(args['model_dir'])
-        args['model'] = os.path.join(dirname, 'latest_vit_model3')
+        args['model'] = os.path.join(dirname, 'model')
         args['datagen'] = os.path.join(dirname, 'datagen.gz')
         args['coords_scaler'] = os.path.join(dirname, 'scaler.save')
 
     for i in range(len(args['datasets'])):
-        stacks = os.path.join(args['datasets'][i], 'combined', 'stacks.ome.tif')
+        stacks = os.path.join(args['datasets'][i],
+                              'combined', 'stacks.ome.tif')
         locs = os.path.join(args['datasets'][i], 'combined', 'locs.hdf')
         args['datasets'][i] = (locs, stacks)
 
     return args
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     args = parse_args()
     main(args)
 
