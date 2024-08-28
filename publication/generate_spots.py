@@ -61,8 +61,7 @@ def load_yaml(yaml_path):
 def write_locs(locs, locs_path):
     if 'index' in locs:
         del locs['index']   
-    out_locs_path = locs_path.replace('.hdf5', '.hdf5')
-    with h5py.File(out_locs_path, "w") as locs_file:
+    with h5py.File(locs_path, "w") as locs_file:
         locs_file.create_dataset("locs", data=locs.to_records())
 
 
