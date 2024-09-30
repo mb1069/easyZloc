@@ -294,23 +294,24 @@ args = {
 
 
 if __name__=='__main__':
-
+    
     our_res = ResultDir(
-        '/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak/out_nup_alt_2/nup_renders3/nup.hdf5',
-        'Our method',
-        'blue'
+        './easyZloc/nup.hdf5',
+        'Ours',
+        'blue',
     )
 
     decode_res = ResultDir(
-        '/home/miguel/Projects/smlm_z/publication/comparisons/decode/emitter_remapped_undrift_picked_matched.hdf5', 
+        './decode/emitter_remapped_undrift_picked_matched.hdf5', 
         'DECODE',
-        'green'
+        'green',
     )
 
+
     fd_deeploc_res = ResultDir(
-        '/home/miguel/Projects/smlm_z/publication/comparisons/fd-loco/fd_deeploc_results/fov1_locs_remapped_undrift_picked_matched.hdf5',
+        './fd-loco/fd_deeploc_results/fov1_locs_remapped_undrift_picked_matched.hdf5',
         'FD-Deeploc',
-        'red'
+        'red',
     )
 
     ress = [

@@ -15,6 +15,9 @@ fontprops = fm.FontProperties(size=14)
 from tqdm import tqdm
 from gen_comparison_plots import is_good_reconstruction
 from sklearn.neighbors import KernelDensity
+from itertools import product
+from multiprocessing import Pool
+from functools import partial
 
 class ResultDir:
     def __init__(self, df_path, label, color):
@@ -93,79 +96,85 @@ dfs = []
 # groups = results_bak['group']
 
 # for kde in tqdm([0.25]):
-our_res = ResultDir(
-    '/home/miguel/Projects/smlm_z/publication/models/zeiss_red_beads/out_24_nvidia6_bak/out_nup_alt_2_pic_updated/nup_renders3/nup.hdf5',
-    'Ours',
-    'blue',
-)
 
-decode_res = ResultDir(
-    '/home/miguel/Projects/smlm_z/publication/comparisons/decode/emitter_remapped_undrift_picked_matched.hdf5', 
-    'DECODE',
-    'green',
-)
-
-
-fd_deeploc_res = ResultDir(
-    '/home/miguel/Projects/smlm_z/publication/comparisons/fd-loco/fd_deeploc_results/fov1_locs_remapped_undrift_picked_matched.hdf5',
-    'FD-Deeploc',
-    'red',
-)
-
-ress = [
-    our_res,
-    decode_res,
-    fd_deeploc_res
-]
-
-groups = sorted(list(set().union(*[set(res.df['group']) for res in ress])))
-# groups = [77, 152, 166]
-
-# kdes = np.linspace(0.1, 0.7, 10)
-bandwidths = list(map(int, np.linspace(5, 30, 20)))
-
-def test_kde(args):
+def test_kde(args, groups):
     res, kde_factor = args
     return [res.calc_hist_z(g, kde_factor) for g in groups]
 
 
-from itertools import product
-from multiprocessing import Pool
 
-arg_combis = list(product(ress, bandwidths))
-with Pool(8) as p:
-    r = list(tqdm(p.imap(test_kde, arg_combis), total=len(arg_combis)))
+def main():
+    our_res = ResultDir(
+        './easyZloc/nup.hdf5',
+        'Ours',
+        'blue',
+    )
 
-all_r = []
-for _r in r:
-    all_r += _r
-df = pd.DataFrame.from_records(all_r)
-# for res in ress:
-#     circular_fit = {g: check_2d_fit(res.df[res.df['group']==g]) for g in tqdm(groups)}
-#     df[f'{res.label}_is_circular'] = df['group'].map(lambda g: circular_fit[g])
-
+    decode_res = ResultDir(
+        './decode/emitter_remapped_undrift_picked_matched.hdf5', 
+        'DECODE',
+        'green',
+    )
 
 
-df.to_csv('./kde_results.csv')
+    fd_deeploc_res = ResultDir(
+        './fd-loco/fd_deeploc_results/fov1_locs_remapped_undrift_picked_matched.hdf5',
+        'FD-Deeploc',
+        'red',
+    )
 
-df = pd.read_csv('./kde_results.csv')
-# df_circular = df[df['is_circular']]
-# sns.lineplot(data=df_circular, x='bandwidth', y='quality', hue='method')
-# plt.plot([20, 20], [0, df_circular['quality'].max()], '--', label='Selected factor')
-# plt.legend()
-# plt.ylabel('Valid reconstructions')
-# plt.xlabel('KDE Bandwidth (nm)')
-# plt.savefig('../figures/kde_circular.png')
-# plt.close()
+    ress = [
+        our_res,
+        decode_res,
+        fd_deeploc_res
+    ]
 
-# del df['is_circular']
+    groups = sorted(list(set().union(*[set(res.df['group']) for res in ress])))
+    # groups = [77, 152, 166]
 
-df = df.groupby(['bandwidth', 'method']).sum()
+    # kdes = np.linspace(0.1, 0.7, 10)
+    bandwidths = list(map(int, np.linspace(5, 30, 20)))
 
-plt.plot([15, 15], [0, df['quality'].max()], '--', label='Selected bandwidth')
-sns.lineplot(data=df.groupby(['bandwidth', 'method']).sum(), x='bandwidth', y='quality', hue='method')
-plt.ylabel('Good reconstructions (seperation between [40,60] nm)')
-plt.xlabel('KDE Bandwidth')
-# plt.title('W/o filtering of groups for circular structure in X/Y ')
-plt.savefig('../figures/kde_all.png')
-plt.close()
+    _test_kde = partial(test_kde, groups=groups)
+    arg_combis = list(product(ress, bandwidths))
+    with Pool(1) as p:
+        r = list(tqdm(p.imap(_test_kde, arg_combis), total=len(arg_combis)))
+
+    all_r = []
+    for _r in r:
+        all_r += _r
+    df = pd.DataFrame.from_records(all_r)
+    # for res in ress:
+    #     circular_fit = {g: check_2d_fit(res.df[res.df['group']==g]) for g in tqdm(groups)}
+    #     df[f'{res.label}_is_circular'] = df['group'].map(lambda g: circular_fit[g])
+
+
+
+    df.to_csv('./kde_results.csv')
+
+    df = pd.read_csv('./kde_results.csv')
+    # df_circular = df[df['is_circular']]
+    # sns.lineplot(data=df_circular, x='bandwidth', y='quality', hue='method')
+    # plt.plot([20, 20], [0, df_circular['quality'].max()], '--', label='Selected factor')
+    # plt.legend()
+    # plt.ylabel('Valid reconstructions')
+    # plt.xlabel('KDE Bandwidth (nm)')
+    # plt.savefig('../figures/kde_circular.png')
+    # plt.close()
+
+    # del df['is_circular']
+
+    df = df.groupby(['bandwidth', 'method']).sum()
+
+    plt.plot([15, 15], [0, df['quality'].max()], '--', label='Selected bandwidth')
+    sns.lineplot(data=df.groupby(['bandwidth', 'method']).sum(), x='bandwidth', y='quality', hue='method')
+    plt.ylabel('Good reconstructions (seperation between [40,60] nm)')
+    plt.xlabel('KDE Bandwidth')
+    # plt.title('W/o filtering of groups for circular structure in X/Y ')
+    plt.savefig('../figures/kde_all.png')
+    plt.close()
+
+
+if __name__ == '__main__':
+    main()
+    
