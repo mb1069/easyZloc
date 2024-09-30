@@ -13,7 +13,7 @@ warnings.filterwarnings('ignore', category=NaturalNameWarning)
 
 from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 import matplotlib.font_manager as fm
-fontprops = fm.FontProperties(size=14)
+fontprops = fm.FontProperties(size=16)
 from scipy.optimize import minimize
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KernelDensity
@@ -49,7 +49,6 @@ def check_2d_fit(df):
         return False
     
     center, error = fit_circle(points, radius_px)
-    print(set(df['group']), error)
 
     return error < 0.05
 
@@ -107,20 +106,23 @@ def render_locs(locs, args, ang_xyz=(0,0,0), barsize=None, ax=None, ylabel=True)
     _, img = render(locs.to_records(), blur_method=args['blur_method'], viewport=viewport, min_blur_width=args['min_blur'], ang=ang_xyz, oversampling=args['oversample'])
 
     if ang_xyz == (0, 0, 0):
-        ax.set_xlabel('x [nm]')
+        ax.set_xlabel('x')
         if ylabel:
-            ax.set_ylabel('y [nm]')
+            ax.set_ylabel('y')
     elif ang_xyz == (np.pi/2, 0, 0):
-        ax.set_xlabel('z [nm]')
+        ax.set_xlabel('z')
         if ylabel:
-            ax.set_ylabel('x [nm]')
+            ax.set_ylabel('x')
         img = img.T
         viewport = np.fliplr(viewport)
-
-    elif ang_xyz == (0, np.pi/2, 0):
-        ax.set_xlabel('z [nm]')
+    elif ang_xyz == (np.pi/2, 0, np.pi/2):
+        ax.set_xlabel('x')
         if ylabel:
-            ax.set_ylabel('y [nm]')
+            ax.set_ylabel('z')
+    elif ang_xyz == (0, np.pi/2, 0):
+        ax.set_xlabel('z')
+        if ylabel:
+            ax.set_ylabel('y')
     else:
         print('Axis labels uncertain due to rotation angle')
 
@@ -180,14 +182,23 @@ class ResultDir:
     def scatter_xy(self, group, ax):
         sns.scatterplot(data=self.df[self.df['group']==group], x='x', y='y', label=self.label, ax=ax)
 
-    def plot_hist_z(self, group, ax, plot=True, bandwidth=20):
+    def plot_hist_z(self, group, ax, plot=True, bandwidth=20, col=0):
         sub_df = self.df[self.df['group']==group]
+        print(self.label, sub_df.shape)
         bins = np.arange(-1000, 1000, 25)
         
         zs = sub_df['z [nm]'].to_numpy()[:, None]
 
         kde = KernelDensity(bandwidth=bandwidth)
-        kde.fit(zs)
+        try:
+            kde.fit(zs)
+        except ValueError:
+            self.group_results.append({
+                'group': group,
+                'quality': False,
+                'method': self.label
+            })
+            return
 
         # kde = gaussian_kde(bw_method='silverman')
         # kde.set_bandwidth(kde.factor * 0.2)
@@ -208,14 +219,17 @@ class ResultDir:
         good_reconstruction = False
 
         if plot:
-            sns.histplot(data=sub_df, 
-                        x='z [nm]', 
-                        stat='density', 
-                        bins=bins, 
-                        ax=ax, 
-                        alpha=0.25, 
-                        color=self.color
-                        )
+            ax.set_xlabel('z [nm]')
+            if col == 0:
+                ax.set_ylabel('density (locs/nm)')
+            # sns.histplot(data=sub_df, 
+            #             x='z [nm]', 
+            #             stat='density', 
+            #             bins=bins, 
+            #             ax=ax, 
+            #             alpha=0.25, 
+            #             color=self.color
+            #             )
             ax.set_xlim((peak-zrange, peak+zrange))
             ax.plot(zvals, score, label='KDE', color=self.color)
 
@@ -236,9 +250,10 @@ class ResultDir:
 
             if plot:
                 ax.scatter(xs, ys, label=f'sep={str(round(sep, 1))}', marker='x', color='red')
-                ax.plot(xs, [threshold, threshold], linestyle='dashed', color=self.color)
-                for i in range(len(xs)):
-                    ax.plot([xs[i], xs[i]], [threshold, ys[i]], linestyle='dashed', color=self.color)
+                ax.plot([peak-zrange, peak+zrange], [threshold, threshold], linestyle='dashed', color=self.color, label='Dens. thresh.')
+                # ax.plot(xs, [threshold, threshold], linestyle='dashed', color=self.color)
+                # for i in range(len(xs)):
+                #     ax.plot([xs[i], xs[i]], [threshold, ys[i]], linestyle='dashed', color=self.color)
         except IndexError as e:
             tqdm.write(f'Could not resolve a bimodal structure: {self.label}, {group}')
             pass
@@ -249,7 +264,7 @@ class ResultDir:
         })
         if plot:
             ax.set_title(f'{self.label}, N pts: {sub_df.shape[0]}')
-            ax.legend()
+            ax.legend(loc='lower left')
 
     def render_xz(self, group, ax, ylabel):
         sub_df = self.df[self.df['group']==group].copy(deep=True)
@@ -270,7 +285,7 @@ class ResultDir:
         if sub_df.shape[0] == 0:
             return
     
-        render_locs(sub_df, args, (np.pi/2,0,0), barsize=50, ax=ax, ylabel=ylabel)
+        render_locs(sub_df, args, (np.pi/2, 0, np.pi/2), barsize=50, ax=ax, ylabel=ylabel)
 
     def render_xy(self, group, ax, ylabel):
         sub_df = self.df[self.df['group']==group].copy(deep=True)
@@ -294,10 +309,10 @@ args = {
 
 
 if __name__=='__main__':
-    
+
     our_res = ResultDir(
         './easyZloc/nup.hdf5',
-        'Ours',
+        'easyZloc',
         'blue',
     )
 
@@ -324,13 +339,15 @@ if __name__=='__main__':
     # results_bak = pd.read_csv('./results_bak.csv')
     # results_bak = results_bak[results_bak['circular_fit']]
     # groups = results_bak['group']
-    outdir = os.path.abspath('./comparison_plots')
+    # groups = list(range(200))
+    # groups = [g for g in groups if g == 373]
+    outdir = os.path.abspath('./comparison_plots2')
 
     os.makedirs(outdir, exist_ok=True)
-    subdirs = ['good', 'other']
+    subdirs = [os.path.join(outdir, r.label) for r in ress] + [os.path.join(outdir, 'other')]
     for sd in subdirs:
         path = os.path.join(outdir, sd)
-        shutil.rmtree(path, ignore_errors=True)
+        # shutil.rmtree(path, ignore_errors=True)
         os.makedirs(path, exist_ok=True)
 
 
@@ -343,31 +360,33 @@ if __name__=='__main__':
         #     continue
         if plot:
             fig = plt.figure(figsize=(10, 10))
+            plt.tight_layout()
             ax1 = fig.add_subplot(3, 3, 1)
             ax2 = fig.add_subplot(3, 3, 2)
             ax3 = fig.add_subplot(3, 3, 3)
             
             ax4 = fig.add_subplot(3, 3, 4)
-            ax5 = fig.add_subplot(3, 3, 5, sharey=ax4)
-            ax6 = fig.add_subplot(3, 3, 6, sharey=ax4)
+            ax5 = fig.add_subplot(3, 3, 5)
+            ax6 = fig.add_subplot(3, 3, 6)
 
-            ax7 = fig.add_subplot(3, 3, 7, sharex=ax4)
-            ax8 = fig.add_subplot(3, 3, 8, sharey=ax7, sharex=ax5)
-            ax9 = fig.add_subplot(3, 3, 9, sharey=ax7, sharex=ax6)
+            ax7 = fig.add_subplot(3, 3, 7)
+            ax8 = fig.add_subplot(3, 3, 8)
+            ax9 = fig.add_subplot(3, 3, 9)
             axs = np.array([
                 [ax1, ax2, ax3],
                 [ax4, ax5, ax6],
                 [ax7, ax8, ax9]
             ])
+
+            for ax in [ax4, ax5, ax6, ax7, ax8, ax9]:
+                ax.get_xaxis().set_ticks([])
+                ax.get_yaxis().set_ticks([])
             # fig, axs = plt.subplots(3, 3, figsize=(10,10), sharey='row')
             # plt.tight_layout()
         else:
             axs = np.zeros((2, 3))
-        for res, ax  in zip(ress, axs[0]):
-            try:
-                res.plot_hist_z(g, ax, plot=plot, bandwidth=BANDWIDTH)
-            except ValueError:
-                pass
+        for i, (res, ax) in enumerate(zip(ress, axs[0])):
+            res.plot_hist_z(g, ax, plot=plot, bandwidth=BANDWIDTH, col=i)
 
         if plot:
             for i, (res, ax)  in enumerate(zip(ress, axs[1])):
@@ -379,16 +398,23 @@ if __name__=='__main__':
                 ylabel = i == 0
                 res.render_xy(g, ax, ylabel)
         
-        dir_idx = int(not our_res.group_results[-1]['quality'])
-
-        fname = f'{g}.png'
-        outpath = os.path.join(outdir, subdirs[dir_idx], fname)
-
         if plot:
             plt.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.05)
-            plt.savefig(outpath)
+
+            fname = f'{g}.png'
+            saved = False
+            for r in ress:
+                if r.group_results[-1]['quality']:
+                    outpath = os.path.join(outdir, r.label, fname)
+                    plt.savefig(outpath)
+                    tqdm.write(outpath)
+                    saved = True
+            if not saved:
+                outpath = os.path.join(outdir, 'other', fname)
+                plt.savefig(outpath)
+                tqdm.write(outpath)
             plt.close()
-            tqdm.write(outpath)
+            
         
 
 
@@ -399,7 +425,7 @@ if __name__=='__main__':
 
     df = pd.concat([res.compile_df() for res in ress])
     df = pd.pivot(df, index='group', columns='method', values='quality')
-    df['all_good'] = df['DECODE'] & df['FD-Deeploc'] & (df['Our method'])
+    df['all_good'] = df['DECODE'] & df['FD-Deeploc'] & (df['easyZloc'])
     df.fillna(False, inplace=True)
     df['circular_fit'] = circular_fit
     df.to_csv('./results.csv')
@@ -407,11 +433,9 @@ if __name__=='__main__':
     df = pd.read_csv('./results.csv')
     df.reset_index(inplace=True)
     for row in df.to_dict(orient='records'):
-        if row['Our method']:
-            print(f"comparison_plots/good/{row['group']}.png")
+        if row['easyZloc']:
+            print(f"{outdir}/good/{row['group']}.png")
 
-    for col in [r.label for r in ress]:
-        print(col, df[col].sum(), df[col].sum() / df.shape[0])
 
         # fig, ax = plt.subplots(figsize=(14,3))
         # ax.axis('off')
