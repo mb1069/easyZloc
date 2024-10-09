@@ -2,7 +2,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import gc
 import joblib
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 import scipy.optimize as opt
 from sklearn.preprocessing import KBinsDiscretizer, MinMaxScaler
 from sklearn.model_selection import train_test_split
@@ -351,7 +351,7 @@ def train_model(train_data, val_data, args):
         print('\nInterrupted training\n')
         history = None
 
-    model.save(os.path.join(args['outdir'], './model'))
+    model.save(args['model_path'])
 
     print('Finished!')
 
@@ -455,9 +455,10 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ds_true_vals.extend(z_vals)
             pred_vals = preds[idx]
             group_images = images[idx]
-            error = abs(z_vals - pred_vals)
-
-            mae = str(round(error.mean(), 2))
+            mae_error = abs(z_vals - pred_vals)
+            rmse_error = root_mean_squared_error(z_vals, pred_vals)
+            mae = str(round(mae_error.mean(), 2))
+            rmse = str(round(rmse_error.mean(), 2))
 
             fig = plt.figure(layout="constrained", figsize=(12, 10), dpi=80)
             gs = plt.GridSpec(4, 2, figure=fig)
@@ -473,7 +474,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax1.plot([-1000, 1000], [-1000, 1000], c='orange')
             ax1.set_xlabel('estimated true z (nm)')
             ax1.set_ylabel('Predicted z (nm)')
-            ax1.set_title(f'MAE: {mae}nm')
+            ax1.set_title(f'RMSE: {rmse}nm')
 
             # Plot 2 - images in order from Z stack
             ax2.imshow(grid_psfs(group_images.mean(axis=-1)).T)
@@ -481,9 +482,9 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             ax2.set_axis_off()
 
             # Plot 3 - images in order of prediction error (check for bias)
-            ax3.imshow(grid_psfs(group_images[np.argsort(error)].mean(axis=-1)).T)
+            ax3.imshow(grid_psfs(group_images[np.argsort(mae_error)].mean(axis=-1)).T)
             ax3.set_title('Ordered by increasing prediction error')
-            ax3.set_xlabel(f'min error: {str(round(min(error), 2))}, max error: {str(round(max(error), 2))}')
+            ax3.set_xlabel(f'min error: {str(round(min(mae_error), 2))}, max error: {str(round(max(mae_error), 2))}')
             ax3.set_axis_off()
 
             ax4.scatter(coords[:, 0], coords[:, 1])
@@ -502,7 +503,7 @@ def write_report(model, locs, train_data, val_data, test_data, args):
                 pred_vals -= offset
                 adj_mae = str(round(adj_mae, 2))
                 offset_fmt = str(round(offset, 2))
-                ax1.set_title(f'MAE: {mae}nm, corrected MAE: {adj_mae}nm, offset: {offset_fmt}nm')
+                ax1.set_title(f'RMSE: {rmse}nm, corrected MAE: {adj_mae}nm, offset: {offset_fmt}nm')
                 mae = adj_mae
             else:
                 offset = 0
@@ -514,18 +515,20 @@ def write_report(model, locs, train_data, val_data, test_data, args):
             plt.close()
 
             ds_pred_vals.extend(pred_vals)
-            tbl_data.append((dirname, num, gcoords[0][0], gcoords[1][0], mae, min(error), max(error), offset))
+            tbl_data.append((dirname, num, gcoords[0][0], gcoords[1][0], mae, rmse, min(error), max(error), offset))
 
             if num == 10 and dirname == 'train':
                 break
 
         ds_mae = mean_absolute_error(ds_true_vals, ds_pred_vals)
+        ds_rmse = root_mean_squared_error(ds_true_vals, ds_pred_vals)
         report_data[dirname + '_mae'] = float(ds_mae)
+        report_data[dirname + '_rmse'] = float(ds_rmse)
         print(dirname, report_data[dirname + '_mae'])
 
         wandb.run.summary[dirname + '_mae'] = float(ds_mae)
 
-    df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'min_error', 'max_error', 'offset'])
+    df = pd.DataFrame(tbl_data, columns=['dataset', 'id', 'x', 'y', 'mae', 'rmse', 'min_error', 'max_error', 'offset'])
     df.to_csv(os.path.join(args['outdir'], 'results', 'results.csv'))
 
     with open(os.path.join(args['outdir'], 'results', 'report.json'), 'w') as fp:
@@ -618,7 +621,6 @@ def prepare_data(args):
     save_dataset(val_data, 'val', args)
     save_dataset(test_data, 'test', args)
     # save_dataset(train_data, 'train', args)
-
     return train_data, val_data, test_data, locs
 
 
@@ -648,7 +650,7 @@ def main(args):
         train_data = None
         val_data = load_dataset('val', args)
         test_data = load_dataset('test', args)
-        model = load_model(args)
+        model = load_model(args['model_path'])
         stacks, locs, zs = load_data(args)
         # Used to regen train/val/test split in locs file
         split_train_val_test(stacks, locs, zs, args)
@@ -738,7 +740,7 @@ def run_tool():
     i = 1
     # If output dir already exists, add a postfix _n to avoid overwriting data
     base_outdir = args['outdir']
-    while os.path.exists(args['outdir']):
+    while os.path.exists(args['outdir']) and not args['regen_report']:
         args['outdir'] = f'{base_outdir}_{i}'
         # shutil.rmtree(args['outdir'])
         i += 1
@@ -747,6 +749,8 @@ def run_tool():
 
     tf.keras.utils.set_random_seed(args['seed']) 
     tf.config.experimental.enable_op_determinism()
+
+    args['model_path'] = os.path.join(args['outdir'], './model')
 
     init_wandb(args)
     main(args)
