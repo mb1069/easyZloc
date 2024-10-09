@@ -8,6 +8,7 @@ import h5py
 
 PIXEL_SIZE = 106
 
+
 def main(args):
     df_fdloco = pd.read_hdf(args['target_nup_locs'], key='locs')
     df_ours = pd.read_hdf(args['src_nup_locs'], key='locs')
@@ -17,6 +18,7 @@ def main(args):
     from sklearn.metrics import pairwise_distances
 
     fd_loco_xy = fd_loco_groups[['x', 'y']].to_numpy()
+
     ours_xy = ours_groups[['x', 'y']].to_numpy()
     fd_loco_groups = fd_loco_groups['group'].to_numpy().astype(int)
 

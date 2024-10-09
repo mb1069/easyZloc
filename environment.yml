@@ -3,10 +3,10 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - pip=24.2=pyhd8ed1ab_0
-  - python=3.10.12=hd12c33a_0_cpython
-  - setuptools=72.1.0=pyhd8ed1ab_0
-  - wheel=0.44.0=pyhd8ed1ab_0
+  - pip=24.2
+  - python=3.10.12
+  - setuptools=72.1.0
+  - wheel=0.44.0
   - pip:
       - absl-py==1.4.0
       - altair==5.1.2
@@ -125,12 +125,6 @@ dependencies:
       - numba==0.58.0
       - numexpr==2.8.5
       - numpy==1.24.3
-      - nvidia-cublas-cu11==11.11.3.6
-      - nvidia-cublas-cu12==12.2.5.6
-      - nvidia-cuda-nvrtc-cu12==12.2.140
-      - nvidia-cuda-runtime-cu12==12.2.140
-      - nvidia-cudnn-cu11==8.6.0.163
-      - nvidia-cudnn-cu12==8.9.4.25
       - oauthlib==3.2.2
       - opencv-python==4.8.0.76
       - opt-einsum==3.3.0
@@ -215,10 +209,6 @@ dependencies:
       - tensorflow-addons==0.21.0
       - tensorflow-estimator==2.14.0
       - tensorflow-io-gcs-filesystem==0.34.0
-      - tensorrt==10.3.0
-      - tensorrt-cu12==10.3.0
-      - tensorrt-cu12-bindings==10.3.0
-      - tensorrt-cu12-libs==10.3.0
       - termcolor==2.3.0
       - terminado==0.17.1
       - threadpoolctl==3.2.0
