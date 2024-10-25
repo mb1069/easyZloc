@@ -149,6 +149,7 @@ def main():
     #     df[f'{res.label}_is_circular'] = df['group'].map(lambda g: circular_fit[g])
 
 
+    df.loc[df['method']=='Ours', 'method'] = 'easyZloc'
 
     df.to_csv('./kde_results.csv')
 
