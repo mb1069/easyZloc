@@ -37,6 +37,8 @@ smlm-prep-data  -z  Z_STEP <BEAD_STACK_DIR>
 ```
 Parameters `-qe -s -g -bl -a` are passed directly to Picasso's localisation; it is recommended to check these manually on a tif file before using them across all files if the default settings do not compile sensible training data.
 
+If a high % of beads are removed during co-localisation, the localisation is either too sensitive (increase gradient) or the sample is too dense.
+
 This will generate a new directory `<BEAD_STACK_DIR>/combined` with 3 files:
 
 -  `stacks.ome.tif`: a hyperstack of all beads extracted from the dataset
