@@ -77,7 +77,7 @@ def get_or_create_locs(slice_path, pixel_size, args):
     spots_path = slice_path.replace('.ome.tif', '.ome_spots.hdf5')
     locs_path = slice_path.replace('.ome.tif', '.ome_locs.hdf5')
 
-    if not os.path.exists(spots_path) or not os.path.exists(locs_path) or args['regen']:
+    if not os.path.exists(locs_path) or args['regen']:
         cmd = ['picasso', 'localize', slice_path, '-b', args['box_size_length'], '-g', args['gradient'], '-px', pixel_size]
         for extra_arg in ['qe', 'sensitivity', 'gain', 'baseline', 'fit-method']:
             if extra_arg in args and args[extra_arg]:
@@ -94,7 +94,6 @@ def get_or_create_locs(slice_path, pixel_size, args):
             return
         tqdm.write('finished!')
 
-    if not os.path.exists(spots_path):
         main_gen_spots({'locs': locs_path, 'img': slice_path})
 
     with h5py.File(spots_path) as f:
@@ -369,7 +368,7 @@ def filter_mse_xy(stack, max_mse):
     return filter_2d_gaussian(image, max_mse)
 
 
-def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
+def filter_beads(locs, stacks, z_step, args, rejected_outpath):
     print('Removing poorly imaged beads...', end='')
 
     # Eval all filters on all bead stacks
@@ -381,7 +380,7 @@ def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
     # Keep only beads which pass all filters
     idx = np.argwhere(snrs & fwhms & mse_z & mse_xy)[:, 0]
     reasons = [''] * len(snrs)
-    for i in range(spots.shape[0]):
+    for i in range(locs.shape[0]):
         if not fwhms[i]:
             reasons[i] += 'fwhm'
         if not snrs[i]:
@@ -404,13 +403,12 @@ def filter_beads(spots, locs, stacks, z_step, args, rejected_outpath):
             print('Test1', 'offset' in list(locs))
             write_stack_figures(stacks[rejected_idx], locs.iloc[rejected_idx], rejected_outpath, z_step)
 
-    spots = spots[idx]
     locs = locs.iloc[idx]
     stacks = stacks[idx]
 
     print('finished!')
 
-    return spots, locs, stacks
+    return locs, stacks
 
 
 def write_combined_data(stacks, locs, z_step, px_size, xsize, ysize, args):
@@ -531,7 +529,6 @@ def get_pixel_size(tags):
 def main(args):
     # Extracts beads from each image stack and compiles them into output files
     all_stacks = []
-    all_spots = []
     all_locs = []
 
     n_total_beads = 0
@@ -604,11 +601,10 @@ def main(args):
         print(f'Removed {perc_removed}% due to co-location')
 
         stacks = extract_training_stacks(locs, bead_stack, args)
-        spots, locs, stacks = filter_beads(spots, locs, stacks, z_step, args, rejected_outpath)
+        locs, stacks = filter_beads(locs, stacks, z_step, args, rejected_outpath)
         retained_beads += locs.shape[0]
         tqdm.write(f'Retained {stacks.shape[0]} beads')
         all_stacks.append(stacks)
-        all_spots.append(spots)
         all_locs.append(locs)
 
     print(f'Found {n_total_beads} total beads')
