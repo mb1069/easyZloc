@@ -79,11 +79,12 @@ def get_or_create_locs(slice_path, pixel_size, args):
 
     if not os.path.exists(spots_path) or not os.path.exists(locs_path) or args['regen']:
         cmd = ['picasso', 'localize', slice_path, '-b', args['box_size_length'], '-g', args['gradient'], '-px', pixel_size]
-        print(f'Running {" ".join(list(map(str, cmd)))}')
         for extra_arg in ['qe', 'sensitivity', 'gain', 'baseline', 'fit-method']:
             if extra_arg in args and args[extra_arg]:
-                cmd.extend([f'-{extra_arg}', args[extra_arg]])
+                cmd.extend([f'--{extra_arg}', args[extra_arg]])
         cmd = ' '.join(list(map(str, cmd)))
+        print(f'Running {cmd}')
+
         tqdm.write('Running picasso...', end='')
         res = subprocess.run(cmd, capture_output=True, shell=True, text=True)
         if res.returncode != 0:

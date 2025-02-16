@@ -1,5 +1,4 @@
 
-from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
 from picasso import io
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -16,6 +15,7 @@ import sys
 import os
 cwd = os.path.dirname(__file__)
 sys.path.append(cwd)
+from util.util import grid_psfs, preprocess_img_dataset, get_model_report, get_model_img_norm, get_model_output_scale, get_model_imsize, read_exp_pixel_size, load_model
 
 
 # # TODO remove this
